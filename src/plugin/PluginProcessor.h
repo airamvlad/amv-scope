@@ -2,8 +2,12 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-#include "dsp/SampleFifo.h"
+#include "Parameters.h"
+#include "dsp/SyncedCapture.h"
+#include "dsp/TriggerDetector.h"
 
+#include <atomic>
+#include <cstdint>
 #include <vector>
 
 class AMVScopeAudioProcessor final : public juce::AudioProcessor
@@ -36,18 +40,45 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    /** Audio going to the display. The audio thread pushes, the editor pops. */
-    amvscope::SampleFifo<amvscope::Frame>& getScopeFifo() noexcept { return scopeFifo; }
+    juce::AudioProcessorValueTreeState apvts;
 
-    double getCurrentSampleRate() const noexcept { return currentSampleRate.load(); }
+    /** What the display draws. Safe to read from the UI thread. */
+    const amvscope::SyncedCapture& getCapture() const noexcept { return capture; }
 
-    /** Settings saved with the project. Message thread only. */
-    juce::ValueTree state { "AMVScope" };
+    /** True while the picture follows the host transport, false while it is triggered by level. */
+    bool isFollowingHost() const noexcept { return followingHost.load (std::memory_order_relaxed); }
+
+    /** Window length in quarter notes, as last used by the audio thread. */
+    double getWindowQuarters() const noexcept { return windowQuarters.load (std::memory_order_relaxed); }
+
+    /** Quarter notes per bar (4 for 4/4), as last reported by the host. */
+    double getQuartersPerBar() const noexcept { return quartersPerBar.load (std::memory_order_relaxed); }
+
+    double getBpm() const noexcept { return bpm.load (std::memory_order_relaxed); }
 
 private:
-    amvscope::SampleFifo<amvscope::Frame> scopeFifo { 1 << 16 };
-    std::vector<amvscope::Frame> scratch;
-    std::atomic<double> currentSampleRate { 48000.0 };
+    void captureTriggered (const float* mono, int numSamples, double samplesPerQuarter, double window);
+
+    amvscope::SyncedCapture capture;
+    amvscope::TriggerDetector trigger;
+    std::vector<float> mono;
+
+    double sampleRate = 48000.0;
+
+    // Trigger mode: where the current recording is, in quarter notes since the trigger.
+    double triggerPosition = 0.0;
+    bool triggerRecording = false;
+    std::int64_t triggerCount = 0;
+
+    std::atomic<bool> followingHost { false };
+    std::atomic<double> windowQuarters { 1.0 };
+    std::atomic<double> quartersPerBar { 4.0 };
+    std::atomic<double> bpm { 120.0 };
+
+    std::atomic<float>* lengthParam = nullptr;
+    std::atomic<float>* syncParam = nullptr;
+    std::atomic<float>* thresholdParam = nullptr;
+    std::atomic<float>* freezeParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVScopeAudioProcessor)
 };
