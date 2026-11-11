@@ -25,3 +25,8 @@ Mac: raspakuj "...-macOS-manual.zip", kopiraj "AMVScope.vst3" u
 
 Ako se plugin ne pojavi: Bitwig > Settings > Locations > Plug-in Locations,
 proveri da je VST3 folder na listi i klikni Rescan.
+
+DEINSTALACIJA
+Windows: Settings > Apps > Installed apps > AMVScope > Uninstall, ili obrisi
+   folder  C:\Program Files\Common Files\VST3\AMVScope.vst3
+Mac: obrisi  /Library/Audio/Plug-Ins/VST3/AMVScope.vst3

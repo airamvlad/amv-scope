@@ -59,4 +59,12 @@ ctest --test-dir build -C Release --output-on-failure
 - `src/plugin/`: JUCE plugin (procesor, prozor i `SharedSources`, preko kog se instance vide).
 - `tests/PluginTests.cpp`: pokreće pravi procesor bez DAW-a.
 
-Plugin koristi [JUCE](https://juce.com) (besplatan za ličnu upotrebu; za prodaju proveriti uslove licence).
+## Licenca
+
+AMVScope je slobodan softver pod licencom [GNU AGPLv3](LICENSE). Koristi [JUCE](https://juce.com), koji je za open-source projekte dostupan pod istom licencom.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+Pravila potpisivanja, uloge u timu, privatnost i deinstalacija opisani su u [CODE_SIGNING.md](CODE_SIGNING.md). Plugin ne šalje nikakve podatke preko mreže.
