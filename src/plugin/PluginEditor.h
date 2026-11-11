@@ -66,6 +66,8 @@ private:
     void drawLegend (juce::Graphics&);
     void drawMeasure (juce::Graphics&, juce::Rectangle<float> area) const;
     void drawPhase (juce::Graphics&, juce::Rectangle<float> area) const;
+    void drawBands (juce::Graphics&, juce::Rectangle<float> area) const;
+    bool isBandsView() const;
     void updatePhase();
 
     juce::Rectangle<float> getPlotArea() const { return scopeArea.toFloat().reduced (1.0f, 8.0f); }
@@ -81,14 +83,14 @@ private:
     AMVScopeAudioProcessor& processor;
     juce::LookAndFeel_V4 lookAndFeel;
 
-    juce::Label lengthLabel, syncLabel, zoomLabel, thresholdLabel, colourLabel, sourceLabel, offsetLabel;
-    juce::ComboBox lengthBox, syncBox, colourBox, sourceBox;
+    juce::Label lengthLabel, syncLabel, zoomLabel, thresholdLabel, colourLabel, sourceLabel, offsetLabel, viewLabel;
+    juce::ComboBox lengthBox, syncBox, colourBox, sourceBox, viewBox;
     juce::Slider zoomSlider, thresholdSlider, offsetSlider;
     juce::TextButton freezeButton { "Freeze" };
     juce::ToggleButton sendButton { "Send" }, othersButton { "Show others" }, invertButton { "Invert" };
     juce::TextButton alignButton { "Align" };
 
-    std::unique_ptr<ComboAttachment> lengthAttachment, syncAttachment, colourAttachment, sourceAttachment;
+    std::unique_ptr<ComboAttachment> lengthAttachment, syncAttachment, colourAttachment, sourceAttachment, viewAttachment;
     std::unique_ptr<SliderAttachment> zoomAttachment, thresholdAttachment, offsetAttachment;
     std::unique_ptr<ButtonAttachment> freezeAttachment, sendAttachment, othersAttachment, invertAttachment;
 

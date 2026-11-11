@@ -80,6 +80,10 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     setupLabel (colourLabel, "Colour");
     setupLabel (sourceLabel, "Trig from");
     setupLabel (offsetLabel, "Offset");
+    setupLabel (viewLabel, "View");
+    viewBox.addItemList (amvscope::params::viewNames, 1);
+    viewBox.setTooltip ("Wave: the waveform. Bands: the level of lows (below 200 Hz), mids and highs "
+                        "(above 2.5 kHz) in three rows, so you can see where each signal has its energy.");
     setupSlider (offsetSlider);
     offsetSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 22);
     offsetSlider.setDoubleClickReturnValue (true, 0.0);
@@ -108,7 +112,7 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
 
     for (auto* c : std::initializer_list<juce::Component*> {
              &lengthLabel, &syncLabel, &zoomLabel, &thresholdLabel, &colourLabel, &sourceLabel, &lengthBox,
-             &syncBox, &colourBox, &sourceBox, &offsetLabel, &offsetSlider, &invertButton, &alignButton, &zoomSlider, &thresholdSlider, &freezeButton, &sendButton, &othersButton })
+             &syncBox, &colourBox, &sourceBox, &offsetLabel, &offsetSlider, &invertButton, &alignButton, &viewLabel, &viewBox, &zoomSlider, &thresholdSlider, &freezeButton, &sendButton, &othersButton })
         addAndMakeVisible (c);
 
     auto& apvts = processor.apvts;
@@ -117,6 +121,7 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     syncAttachment = std::make_unique<ComboAttachment> (apvts, ids::sync, syncBox);
     colourAttachment = std::make_unique<ComboAttachment> (apvts, ids::colourMode, colourBox);
     sourceAttachment = std::make_unique<ComboAttachment> (apvts, ids::triggerSource, sourceBox);
+    viewAttachment = std::make_unique<ComboAttachment> (apvts, ids::view, viewBox);
     zoomAttachment = std::make_unique<SliderAttachment> (apvts, ids::zoom, zoomSlider);
     thresholdAttachment = std::make_unique<SliderAttachment> (apvts, ids::threshold, thresholdSlider);
     freezeAttachment = std::make_unique<ButtonAttachment> (apvts, ids::freeze, freezeButton);
@@ -128,7 +133,7 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     // Controls must not keep the keyboard, or the shortcuts stop after one click.
     for (auto* c : std::initializer_list<juce::Component*> { &lengthBox, &syncBox, &colourBox, &sourceBox,
                                                               &freezeButton, &sendButton, &othersButton,
-                                                              &invertButton, &alignButton })
+                                                              &invertButton, &alignButton, &viewBox })
         c->setWantsKeyboardFocus (false);
 
     for (const auto& key : juce::StringArray::fromTokens (apvts.state.getProperty ("hidden").toString(), ",", ""))
@@ -137,10 +142,10 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     setOpaque (true);
     setWantsKeyboardFocus (true);
     // Read the saved size first: setting the limits already resizes the window.
-    const int savedWidth = juce::jlimit (900, 3840, (int) apvts.state.getProperty ("editorWidth", 960));
-    const int savedHeight = juce::jlimit (420, 2160, (int) apvts.state.getProperty ("editorHeight", 580));
+    const int savedWidth = juce::jlimit (1000, 3840, (int) apvts.state.getProperty ("editorWidth", 1040));
+    const int savedHeight = juce::jlimit (460, 2160, (int) apvts.state.getProperty ("editorHeight", 620));
     setResizable (true, true);
-    setResizeLimits (900, 420, 3840, 2160);
+    setResizeLimits (1000, 460, 3840, 2160);
     setSize (savedWidth, savedHeight);
     refresh();
     startTimerHz (60);
@@ -305,11 +310,12 @@ void AMVScopeAudioProcessorEditor::resized()
     };
 
     // The two sliders share whatever width is left.
-    const int fixed = (48 + 6 + 86 + 14) + (34 + 6 + 86 + 14) + (38 + 6 + 14) + (48 + 6 + 14) + 72;
+    const int fixed = (48 + 6 + 86 + 14) + (34 + 6 + 86 + 14) + (36 + 6 + 90 + 14) + (38 + 6 + 14) + (48 + 6 + 14) + 72;
     const int sliderWidth = juce::jlimit (110, 260, (row.getWidth() - fixed) / 2);
 
     place (row, lengthLabel, lengthBox, 48, 86);
     place (row, syncLabel, syncBox, 34, 86);
+    place (row, viewLabel, viewBox, 36, 90);
     place (row, zoomLabel, zoomSlider, 38, sliderWidth);
     place (row, thresholdLabel, thresholdSlider, 48, sliderWidth);
     freezeButton.setBounds (row.removeFromRight (72));
@@ -380,11 +386,18 @@ void AMVScopeAudioProcessorEditor::paint (juce::Graphics& g)
     const bool frequency = juce::roundToInt (processor.apvts.getRawParameterValue (amvscope::params::colourMode)->load())
                            == (int) amvscope::params::ColourMode::frequency;
 
-    // Others first, then the sidechain, then this track on top.
-    // Frequency colours apply to this track only, so the others stay easy to tell apart.
-    for (auto it = traces.rbegin(); it != traces.rend(); ++it)
-        if (it->available && ! hidden[it->key])
-            drawTrace (g, inner, *it, frequency && it->key == "own", it->key == "own" ? 1.0f : 0.85f);
+    if (isBandsView())
+    {
+        drawBands (g, inner);
+    }
+    else
+    {
+        // Others first, then the sidechain, then this track on top.
+        // Frequency colours apply to this track only, so the others stay easy to tell apart.
+        for (auto it = traces.rbegin(); it != traces.rend(); ++it)
+            if (it->available && ! hidden[it->key])
+                drawTrace (g, inner, *it, frequency && it->key == "own", it->key == "own" ? 1.0f : 0.85f);
+    }
 
     drawOverlays (g, inner);
     drawMeasure (g, inner);
@@ -413,6 +426,9 @@ void AMVScopeAudioProcessorEditor::drawGrid (juce::Graphics& g, juce::Rectangle<
         g.setColour (isMajor ? gridMajor : gridMinor);
         g.drawVerticalLine (juce::roundToInt (x), area.getY(), area.getBottom());
     }
+
+    if (isBandsView())
+        return;   // the bands view draws its own row lines
 
     g.setColour (gridMajor);
     g.drawHorizontalLine (juce::roundToInt (area.getCentreY()), area.getX(), area.getRight());
@@ -466,7 +482,7 @@ void AMVScopeAudioProcessorEditor::drawOverlays (juce::Graphics& g, juce::Rectan
         g.drawVerticalLine (juce::roundToInt (x), area.getY(), area.getBottom());
     }
 
-    if (! following)
+    if (! following && ! isBandsView())
     {
         // Trigger level, both polarities.
         const float zoom = processor.apvts.getRawParameterValue (amvscope::params::zoom)->load();
@@ -621,6 +637,7 @@ bool AMVScopeAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
     else if (c == 's')                                toggleParam (ids::sync);
     else if (c == 'c')                                toggleParam (ids::colourMode);
     else if (c == 'o')                                toggleParam (ids::showOthers);
+    else if (c == 'b')                                toggleParam (ids::view);
     else if (c == '+' || c == '=' || key == juce::KeyPress::upKey)   setParam (ids::zoom, juce::jmin (32.0f, zoom * 1.5f));
     else if (c == '-' || key == juce::KeyPress::downKey)             setParam (ids::zoom, juce::jmax (1.0f, zoom / 1.5f));
     else if (key == juce::KeyPress::escapeKey)        measuring = false;
@@ -670,7 +687,9 @@ void AMVScopeAudioProcessorEditor::drawMeasure (juce::Graphics& g, juce::Rectang
         const float x = area.getX() + hoverPos.x * area.getWidth();
         const float y = area.getY() + hoverPos.y * area.getHeight();
         const float zoom = processor.apvts.getRawParameterValue (amvscope::params::zoom)->load();
-        const float level = std::abs (1.0f - 2.0f * hoverPos.y) / zoom;
+        // In the bands view each of the three rows has its own zero line at the bottom.
+        const float rowPos = hoverPos.y * 3.0f - std::floor (juce::jmin (2.999f, hoverPos.y * 3.0f));
+        const float level = (isBandsView() ? 1.0f - rowPos : std::abs (1.0f - 2.0f * hoverPos.y)) / zoom;
 
         g.setColour (text.withAlpha (0.25f));
         g.drawVerticalLine (juce::roundToInt (x), area.getY(), area.getBottom());
@@ -802,4 +821,74 @@ void AMVScopeAudioProcessorEditor::drawPhase (juce::Graphics& g, juce::Rectangle
 
     g.setColour (text.withAlpha (0.85f));
     g.drawText (s, area.toNearestInt(), juce::Justification::centredLeft);
+}
+
+//==============================================================================
+// Bands view
+
+bool AMVScopeAudioProcessorEditor::isBandsView() const
+{
+    return juce::roundToInt (processor.apvts.getRawParameterValue (amvscope::params::view)->load())
+           == (int) amvscope::params::View::bands;
+}
+
+void AMVScopeAudioProcessorEditor::drawBands (juce::Graphics& g, juce::Rectangle<float> area) const
+{
+    const float zoom = processor.apvts.getRawParameterValue (amvscope::params::zoom)->load();
+    const char* names[] { "High  > 2.5 kHz", "Mid", "Low  < 200 Hz" };
+    const float rowHeight = area.getHeight() / 3.0f;
+
+    for (int row = 0; row < 3; ++row)
+    {
+        const auto rowArea = juce::Rectangle<float> (area.getX(), area.getY() + rowHeight * (float) row,
+                                                     area.getWidth(), rowHeight).reduced (0.0f, 3.0f);
+        const float bottom = rowArea.getBottom();
+
+        // Others first, this track on top; each as a filled level curve.
+        for (auto it = traces.rbegin(); it != traces.rend(); ++it)
+        {
+            if (! it->available || (hidden.count (it->key) > 0 && hidden.at (it->key)))
+                continue;
+
+            const auto columns = it->columns.size();
+            const float columnWidth = columns > 0 ? rowArea.getWidth() / (float) columns : 1.0f;
+            juce::Path outline;
+            bool open = false;
+
+            g.setColour (it->colour.withAlpha (it->key == "own" ? 0.45f : 0.3f));
+
+            for (size_t x = 0; x < columns; ++x)
+            {
+                const auto& c = it->columns[x];
+
+                if (! c.filled)
+                {
+                    open = false;
+                    continue;
+                }
+
+                const float level = row == 0 ? c.bands.high : (row == 1 ? c.bands.mid : c.bands.low);
+                const float h = juce::jlimit (0.0f, 1.0f, level * zoom) * rowArea.getHeight();
+                const float px = rowArea.getX() + (float) x * columnWidth;
+
+                g.fillRect (px, bottom - h, juce::jmax (1.0f, columnWidth), h);
+
+                if (open)
+                    outline.lineTo (px, bottom - h);
+                else
+                    outline.startNewSubPath (px, bottom - h);
+
+                open = true;
+            }
+
+            g.setColour (it->colour);
+            g.strokePath (outline, juce::PathStrokeType (1.2f));
+        }
+
+        g.setColour (gridMajor);
+        g.drawHorizontalLine (juce::roundToInt (bottom), area.getX(), area.getRight());
+        g.setColour (text.withAlpha (0.5f));
+        g.setFont (juce::FontOptions (11.0f));
+        g.drawText (names[row], rowArea.reduced (8.0f, 2.0f).toNearestInt(), juce::Justification::topLeft);
+    }
 }

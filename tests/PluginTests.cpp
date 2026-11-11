@@ -277,6 +277,13 @@ void editorKeysAndSize()
         ed->keyPressed (juce::KeyPress ('+', {}, '+'));
         check (p.apvts.getRawParameterValue (amvscope::params::zoom)->load() > 1.4f, "+ zooms in");
         check (! ed->keyPressed (juce::KeyPress ('q', {}, 'q')), "other keys are left to the host");
+        ed->keyPressed (juce::KeyPress ('b', {}, 'b'));
+        check (juce::roundToInt (p.apvts.getRawParameterValue (amvscope::params::view)->load()) == 1, "B switches to the bands view");
+
+        // Painting both views must not crash without any audio.
+        ed->createComponentSnapshot (ed->getLocalBounds());
+        ed->keyPressed (juce::KeyPress ('b', {}, 'b'));
+        ed->createComponentSnapshot (ed->getLocalBounds());
 
         p.getStateInformation (data);
     }
