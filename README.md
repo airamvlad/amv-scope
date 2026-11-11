@@ -21,7 +21,7 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
 - **Faza (donji red):** merač pokazuje koliko se ova traka slaže sa drugim signalom na ekranu (prvi vidljivi: sidechain ili druga instanca). `+1` znači da se talasi poklapaju i sabiraju, `0` da nemaju veze, `-1` da se poništavaju. Pored piše i predlog: za koliko ms treba pomeriti ovu traku (i da li okrenuti polaritet) da slaganje bude najbolje.
   - **Offset** pomera ovu traku na ekranu (u ms, plus znači kasnije), **Invert** joj okreće polaritet, a **Align** postavlja oba na predloženu vrednost. Pomak vide i ostale instance.
   - Ovo menja samo prikaz, ne i zvuk. Kad nađeš vrednost koja ti odgovara, isti pomak podesi u Bitwigu (kašnjenje trake ili *Time Shift* uređaj) i polaritet po potrebi.
-  - Merač radi kad je *Length* 1/2 ili kraće.
+  - Merač radi kad je *Length* 1/2 ili kraće. Ako se dva signala ne čuju u isto vreme (npr. bas počinje tek kad kick utihne), piše da se ne preklapaju i *Align* ne radi ništa, jer tada nema šta da se poravna.
 
 ![Phase](docs/screenshot-phase.png)
 

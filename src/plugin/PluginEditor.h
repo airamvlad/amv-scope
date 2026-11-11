@@ -33,6 +33,7 @@ public:
     struct PhaseInfo
     {
         bool valid = false;            // false: nothing to compare with, or the window is too long
+        bool related = false;          // false: the two signals do not play together, nothing to align
         juce::String partner;          // name of the signal this track is compared with
         float correlation = 0.0f;      // -1..+1 as shown now
         float suggestedOffsetMs = 0.0f;   // value for Offset that gives the best match

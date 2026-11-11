@@ -324,6 +324,7 @@ void phaseSuggestionAlignsTracks()
     check (before.correlation < 0.9f, "delayed copy is not fully in phase");
     check (std::abs (before.suggestedOffsetMs + 5.0f) < 0.8f, "suggests moving the late track 5 ms earlier");
     check (! before.suggestedInvert, "no polarity flip suggested");
+    check (before.related, "overlapping signals get a suggestion");
 
     editor->alignToSuggestion();
     run (b, headB, blockSize, [&] (int n) { return kick (n + 24000 * 3 - 240); });   // lets the offset reach the source
@@ -337,6 +338,43 @@ void phaseSuggestionAlignsTracks()
     for (int i = 0; i < 6; ++i) editor->refresh();
     check (editor->getPhaseInfo().correlation < -0.97f, "inverted track reads negative");
     check (editor->getPhaseInfo().suggestedInvert == false, "suggests removing the flip");
+}
+
+void noSuggestionWithoutOverlap()
+{
+    // A plays a kick in the first half of the beat, B a bass note in the second half.
+    // They never sound together, so there is nothing to align.
+    TestPlayHead headA, headB;
+    AMVScopeAudioProcessor a, b;
+    a.setPlayHead (&headA);
+    b.setPlayHead (&headB);
+    prepare (a);
+    prepare (b);
+
+    run (a, headA, 24000 * 3, [] (int n)
+    {
+        const int i = n % 24000;
+        const double t = (double) i / sampleRate;
+        return i < 10000 ? (float) (0.9 * std::exp (-t * 30.0) * std::sin (6.283185307 * 60.0 * t)) : 0.0f;
+    });
+    run (b, headB, 24000 * 3, [] (int n)
+    {
+        const int i = n % 24000;
+        return i >= 12000 ? (float) (0.5 * std::sin (6.283185307 * 87.0 * (double) i / sampleRate)) : 0.0f;
+    });
+
+    std::unique_ptr<juce::AudioProcessorEditor> ed (b.createEditor());
+    auto* editor = dynamic_cast<AMVScopeAudioProcessorEditor*> (ed.get());
+    editor->refresh();
+
+    const auto info = editor->getPhaseInfo();
+    check (info.valid, "phase readout still shown");
+    check (std::abs (info.correlation) < 0.2f, "signals that do not overlap read about zero");
+    check (! info.related, "no suggestion when the signals do not overlap");
+
+    editor->alignToSuggestion();
+    check (std::abs (b.apvts.getRawParameterValue (amvscope::params::offset)->load()) < 1e-6f, "Align leaves Offset alone");
+    check (b.apvts.getRawParameterValue (amvscope::params::invert)->load() < 0.5f, "Align leaves Invert alone");
 }
 
 void ghostAndLevels()
@@ -485,6 +523,7 @@ int main()
     triggerFromSidechain();
     editorKeysAndSize();
     phaseSuggestionAlignsTracks();
+    noSuggestionWithoutOverlap();
     ghostAndLevels();
     instancesSeeEachOther();
     stateRoundTrip();

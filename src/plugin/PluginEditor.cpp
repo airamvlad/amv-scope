@@ -331,6 +331,7 @@ void AMVScopeAudioProcessorEditor::refresh()
     {
         phaseCountdown = 6;
         updatePhase();
+        alignButton.setEnabled (phase.valid && phase.related);
     }
 }
 
@@ -922,12 +923,16 @@ void AMVScopeAudioProcessorEditor::updatePhase()
     info.suggestedInvert = best.inverted ? ! invertNow : invertNow;
     info.suggestedCorrelation = std::abs (best.correlation);
 
+    // When even the best shift barely matches, the signals do not play at the
+    // same time (e.g. a bass that starts after the kick), and a suggestion would be noise.
+    info.related = info.suggestedCorrelation >= 0.2f;
+
     phase = info;
 }
 
 void AMVScopeAudioProcessorEditor::alignToSuggestion()
 {
-    if (! phase.valid)
+    if (! phase.valid || ! phase.related)
         return;
 
     setParam (amvscope::params::offset, phase.suggestedOffsetMs);
@@ -952,7 +957,12 @@ void AMVScopeAudioProcessorEditor::drawPhase (juce::Graphics& g, juce::Rectangle
     const auto colour = c > 0.3f ? midColour : (c < -0.3f ? lowColour : juce::Colour (0xffffd43b));
 
     // Meter from -1 (left) to +1 (right), filled from the centre.
-    auto meter = area.removeFromLeft (120.0f).withSizeKeepingCentre (120.0f, 8.0f);
+    g.setFont (juce::FontOptions (11.0f));
+    g.setColour (text.withAlpha (0.5f));
+    g.drawText ("-1", area.removeFromLeft (16.0f).toNearestInt(), juce::Justification::centredLeft);
+    auto meter = area.removeFromLeft (104.0f).withSizeKeepingCentre (104.0f, 8.0f);
+    g.drawText ("+1", area.removeFromLeft (22.0f).toNearestInt(), juce::Justification::centredRight);
+    g.setFont (juce::FontOptions (13.0f));
     g.setColour (gridMajor);
     g.fillRoundedRectangle (meter, 4.0f);
     const float centre = meter.getCentreX();
@@ -964,9 +974,12 @@ void AMVScopeAudioProcessorEditor::drawPhase (juce::Graphics& g, juce::Rectangle
 
     area.removeFromLeft (10.0f);
     juce::String s = "Phase vs " + phase.partner + ":  " + (c >= 0.0f ? "+" : "") + juce::String (c, 2);
-    s << "     Best: " << juce::String (phase.suggestedOffsetMs, 1) << " ms"
-      << (phase.suggestedInvert ? ", inverted" : "")
-      << "  (" << juce::String (phase.suggestedCorrelation, 2) << ")";
+    if (phase.related)
+        s << "     Best: " << juce::String (phase.suggestedOffsetMs, 1) << " ms"
+          << (phase.suggestedInvert ? ", inverted" : "")
+          << "  (" << juce::String (phase.suggestedCorrelation, 2) << ")";
+    else
+        s << "     The signals do not overlap, nothing to align";
 
     g.setColour (text.withAlpha (0.85f));
     g.drawText (s, area.toNearestInt(), juce::Justification::centredLeft);
