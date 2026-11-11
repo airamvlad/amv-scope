@@ -63,7 +63,7 @@ inline BestShift findBestShift (const std::vector<float>& a, const std::vector<f
 
         // A steady tone matches again one cycle later; a small penalty for
         // distance picks the nearest of those matches.
-        const float score = std::abs (c) - 0.03f * (float) std::abs (s) / (float) (maxShift > 0 ? maxShift : 1);
+        const float score = std::abs (c) - 0.1f * (float) std::abs (s) / (float) (maxShift > 0 ? maxShift : 1);
 
         if (score > bestScore)
         {

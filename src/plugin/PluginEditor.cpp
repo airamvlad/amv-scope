@@ -548,6 +548,18 @@ void AMVScopeAudioProcessorEditor::drawOverlays (juce::Graphics& g, juce::Rectan
             g.drawDashedLine ({ area.getX(), y, area.getRight(), y }, dashes, 2, 1.0f);
     }
 
+    // Where the phase is read: the stretch in which both signals sound.
+    if (phase.valid && ! overlapColumns.empty())
+    {
+        const float columnWidth = area.getWidth() / (float) overlapColumns.size();
+        g.setColour (text.withAlpha (0.55f));
+
+        for (size_t x = 0; x < overlapColumns.size(); ++x)
+            if (overlapColumns[x])
+                g.fillRect (area.getX() + (float) x * columnWidth, area.getBottom() - 2.0f,
+                            juce::jmax (1.0f, columnWidth), 2.0f);
+    }
+
     juce::String status = following ? "Host  " + juce::String (processor.getBpm(), 1) + " BPM" : "Trigger";
     if (frozen)
         status << "  |  Frozen";
@@ -858,6 +870,7 @@ void AMVScopeAudioProcessorEditor::drawMeasure (juce::Graphics& g, juce::Rectang
 void AMVScopeAudioProcessorEditor::updatePhase()
 {
     PhaseInfo info;
+    overlapColumns.clear();
 
     const Trace* own = nullptr;
     const Trace* partner = nullptr;
@@ -903,6 +916,66 @@ void AMVScopeAudioProcessorEditor::updatePhase()
         return;
     }
 
+    // Kick and bass often share only a short stretch (the tail of the kick under
+    // the start of the bass). Read the phase only where both sound: where each is
+    // above a tenth of its own peak (8 ms gaps are bridged, to span zero crossings).
+    {
+        const auto envelope = [&] (const Trace& t)
+        {
+            std::vector<float> level (columns, 0.0f), env (columns, 0.0f);
+            float peak = 0.0f;
+
+            for (size_t i = 0; i < columns; ++i)
+            {
+                const auto& c = t.columns[i];
+                level[i] = c.filled ? juce::jmax (std::abs (c.min), std::abs (c.max)) : 0.0f;
+                peak = juce::jmax (peak, level[i]);
+            }
+
+            const auto reach = (size_t) std::ceil (8.0 / msPerColumn);
+
+            for (size_t i = 0; i < columns; ++i)
+                for (size_t j = i > reach ? i - reach : 0; j < juce::jmin (columns, i + reach + 1); ++j)
+                    env[i] = juce::jmax (env[i], level[j]);
+
+            // Shrink back by the same amount, so the envelope ends where the sound ends.
+            std::vector<float> closed (columns, 0.0f);
+
+            for (size_t i = 0; i < columns; ++i)
+            {
+                float lowest = env[i];
+                for (size_t j = i > reach ? i - reach : 0; j < juce::jmin (columns, i + reach + 1); ++j)
+                    lowest = juce::jmin (lowest, env[j]);
+
+                closed[i] = peak > 1.0e-5f ? lowest / peak : 0.0f;
+            }
+
+            return closed;
+        };
+
+        const auto envA = envelope (*partner), envB = envelope (*own);
+        int overlap = 0;
+
+        for (size_t i = 0; i < columns; ++i)
+        {
+            valid[i] = valid[i] && envA[i] > 0.1f && envB[i] > 0.1f;
+            overlap += valid[i] ? 1 : 0;
+        }
+
+        info.overlapMs = (float) ((double) overlap * msPerColumn);
+        overlapColumns = valid;
+    }
+
+    info.valid = true;
+    info.partner = partner->label;
+
+    if (info.overlapMs < 10.0f)
+    {
+        overlapColumns.clear();
+        phase = info;   // shown as "do not overlap"
+        return;
+    }
+
     const float offsetNow = processor.apvts.getRawParameterValue (amvscope::params::offset)->load();
 
     // A shifted track wraps around the window edge, where it meets the wrong
@@ -913,12 +986,12 @@ void AMVScopeAudioProcessorEditor::updatePhase()
 
     const bool invertNow = processor.apvts.getRawParameterValue (amvscope::params::invert)->load() >= 0.5f;
 
-    info.valid = true;
-    info.partner = partner->label;
     info.correlation = amvscope::correlation (a, b, valid);
 
-    // Search +-20 ms around where the track is now.
-    const auto best = amvscope::findBestShift (a, b, valid, juce::jmax (1, (int) (20.0 / msPerColumn)));
+    // Search +-20 ms around where the track is now, but no further than a quarter
+    // of the shared stretch: beyond that too little is left to compare.
+    const double searchMs = juce::jmin (20.0, (double) info.overlapMs * 0.25);
+    const auto best = amvscope::findBestShift (a, b, valid, juce::jmax (1, (int) (searchMs / msPerColumn)));
     info.suggestedOffsetMs = juce::jlimit (-50.0f, 50.0f, offsetNow - (float) ((double) best.exactShift * msPerColumn));
     info.suggestedInvert = best.inverted ? ! invertNow : invertNow;
     info.suggestedCorrelation = std::abs (best.correlation);
@@ -973,7 +1046,10 @@ void AMVScopeAudioProcessorEditor::drawPhase (juce::Graphics& g, juce::Rectangle
     g.fillRect (centre - 0.5f, meter.getY() - 3.0f, 1.0f, meter.getHeight() + 6.0f);
 
     area.removeFromLeft (10.0f);
-    juce::String s = "Phase vs " + phase.partner + ":  " + (c >= 0.0f ? "+" : "") + juce::String (c, 2);
+    juce::String s = "Phase vs " + phase.partner;
+    if (phase.related)
+        s << " (overlap " << juce::String (juce::roundToInt (phase.overlapMs)) << " ms)";
+    s << ":  " << (c >= 0.0f ? "+" : "") << juce::String (c, 2);
     if (phase.related)
         s << "     Best: " << juce::String (phase.suggestedOffsetMs, 1) << " ms"
           << (phase.suggestedInvert ? ", inverted" : "")

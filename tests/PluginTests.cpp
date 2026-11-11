@@ -377,6 +377,41 @@ void noSuggestionWithoutOverlap()
     check (b.apvts.getRawParameterValue (amvscope::params::invert)->load() < 0.5f, "Align leaves Invert alone");
 }
 
+void phaseReadInOverlapOnly()
+{
+    // A: a long kick tail. B: the same tone with flipped polarity, but only for an
+    // eighth of a second. Over the whole beat they barely relate; where both sound
+    // they cancel, and that is what the meter must show.
+    TestPlayHead headA, headB;
+    AMVScopeAudioProcessor a, b;
+    a.setPlayHead (&headA);
+    b.setPlayHead (&headB);
+    prepare (a);
+    prepare (b);
+
+    run (a, headA, 24000 * 3, [] (int n)
+    {
+        const double t = (double) (n % 24000) / sampleRate;
+        return (float) (0.9 * std::exp (-t * 6.0) * std::sin (6.283185307 * 60.0 * t));
+    });
+    run (b, headB, 24000 * 3, [] (int n)
+    {
+        const int i = n % 24000;
+        return i >= 6000 && i < 12000 ? (float) (-0.3 * std::sin (6.283185307 * 60.0 * (double) i / sampleRate)) : 0.0f;
+    });
+
+    std::unique_ptr<juce::AudioProcessorEditor> ed (b.createEditor());
+    auto* editor = dynamic_cast<AMVScopeAudioProcessorEditor*> (ed.get());
+    editor->refresh();
+
+    const auto info = editor->getPhaseInfo();
+    check (info.valid && info.related, "short overlap still gets a reading");
+    check (std::abs (info.overlapMs - 125.0f) < 25.0f, "overlap length is about 125 ms");
+    check (info.correlation < -0.97f, "cancelling tail reads close to -1");
+    check (std::abs (info.suggestedOffsetMs) < 1.0f, "no shift suggested for a pure polarity flip");
+    check (info.suggestedInvert, "suggests flipping the polarity");
+}
+
 void ghostAndLevels()
 {
     TestPlayHead head;
@@ -524,6 +559,7 @@ int main()
     editorKeysAndSize();
     phaseSuggestionAlignsTracks();
     noSuggestionWithoutOverlap();
+    phaseReadInOverlapOnly();
     ghostAndLevels();
     instancesSeeEachOther();
     stateRoundTrip();

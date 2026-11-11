@@ -34,6 +34,7 @@ public:
     {
         bool valid = false;            // false: nothing to compare with, or the window is too long
         bool related = false;          // false: the two signals do not play together, nothing to align
+        float overlapMs = 0.0f;        // how long both signals sound together; the phase is read there only
         juce::String partner;          // name of the signal this track is compared with
         float correlation = 0.0f;      // -1..+1 as shown now
         float suggestedOffsetMs = 0.0f;   // value for Offset that gives the best match
@@ -110,6 +111,7 @@ private:
     bool frozenView = false;
 
     PhaseInfo phase;
+    std::vector<bool> overlapColumns;   // where both signals sound, marked under the plot
     int phaseCountdown = 0;
 
     // Mouse readout: positions are fractions of the plot (0..1 across, 0..1 down).
