@@ -1,5 +1,6 @@
 // End-to-end checks of the plugin processor, without a DAW.
 
+#include "plugin/PluginEditor.h"
 #include "plugin/PluginProcessor.h"
 
 #include <cmath>
@@ -56,7 +57,7 @@ void prepare (AMVScopeAudioProcessor& p)
 template <typename Gen>
 void run (AMVScopeAudioProcessor& p, TestPlayHead& head, int totalSamples, Gen gen)
 {
-    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::AudioBuffer<float> buffer (p.getTotalNumInputChannels(), blockSize);
     juce::MidiBuffer midi;
     const double quartersPerSample = head.bpm / 60.0 / sampleRate;
 
@@ -67,6 +68,10 @@ void run (AMVScopeAudioProcessor& p, TestPlayHead& head, int totalSamples, Gen g
             const float v = gen (start + i);
             buffer.setSample (0, i, v);
             buffer.setSample (1, i, v);
+
+            // Sidechain (channels 2-3, when enabled): the signal half a beat later, inverted.
+            for (int ch = 2; ch < buffer.getNumChannels(); ++ch)
+                buffer.setSample (ch, i, -0.5f * gen (start + i + 12000));
         }
 
         p.processBlock (buffer, midi);
@@ -74,6 +79,12 @@ void run (AMVScopeAudioProcessor& p, TestPlayHead& head, int totalSamples, Gen g
         if (head.playing)
             head.ppq += quartersPerSample * blockSize;
     }
+}
+
+/** Peak of the own ring over [from, to) quarter notes. */
+float ringMax (const amvscope::PpqRing& ring, double from, double to)
+{
+    return ring.read (from, to).max;
 }
 
 int filledBins (const AMVScopeAudioProcessor& p)
@@ -120,11 +131,13 @@ void hostSyncPlacesBeatsInPlace()
     const int samplesPerBeat = 24000;
     run (p, head, samplesPerBeat * 4, [&] (int n) { return n % samplesPerBeat < 10 ? 0.9f : 0.0f; });
 
+    const auto& ring = p.getOwnSource().ring;
     check (p.isFollowingHost(), "follows the host while playing");
     check (std::abs (p.getWindowQuarters() - 1.0) < 1e-9, "window is one quarter note");
-    check (p.getCapture().readBin (0).max > 0.8f, "beat click lands at the start of the window");
-    check (p.getCapture().readBin (1024).max < 0.01f, "middle of the beat is silent");
-    check (filledBins (p) == (int) amvscope::SyncedCapture::numBins, "whole window filled");
+    check (ringMax (ring, 3.0, 3.001) > 0.8f, "beat click recorded at the beat position");
+    check (ringMax (ring, 3.5, 3.501) < 0.01f, "middle of the beat is silent");
+    check (std::abs (ring.getHead() - 4.0) < 0.02, "ring head follows the play position");
+    check (filledBins (p) == 0, "trigger capture unused while following the host");
 }
 
 void barLengthFollowsTimeSignature()
@@ -185,6 +198,94 @@ void freezeStopsRecording()
     setParam (p, amvscope::params::freeze, 1.0f);
     run (p, head, 48000, [] (int) { return 0.5f; });
     check (filledBins (p) == 0, "frozen display does not change");
+    check (! p.getOwnSource().ring.hasData(), "frozen: nothing recorded");
+}
+
+void sidechainIsRecorded()
+{
+    AMVScopeAudioProcessor p;
+    TestPlayHead head;
+    p.setPlayHead (&head);
+    check (p.enableAllBuses(), "sidechain bus can be enabled");
+    p.setRateAndBufferSizeDetails (sampleRate, blockSize);
+    p.prepareToPlay (sampleRate, blockSize);
+
+    const int samplesPerBeat = 24000;
+    run (p, head, samplesPerBeat * 4, [&] (int n) { return n % samplesPerBeat < 10 ? 0.9f : 0.0f; });
+
+    check (p.isSidechainActive(), "sidechain marked active");
+    const auto& sc = p.getSidechainRing();
+    check (sc.read (2.5, 2.501).min < -0.4f, "sidechain click recorded half a beat later");
+    check (sc.read (3.0, 3.001).min > -0.01f, "sidechain silent on the beat");
+}
+
+void sidechainInTriggerMode()
+{
+    AMVScopeAudioProcessor p;
+    TestPlayHead head;
+    head.playing = false;
+    p.setPlayHead (&head);
+    p.enableAllBuses();
+    p.setRateAndBufferSizeDetails (sampleRate, blockSize);
+    p.prepareToPlay (sampleRate, blockSize);
+    setParam (p, amvscope::params::length, 2.0f);   // 1/4 = 24000 samples
+
+    // Click every 30000 samples: main triggers, sidechain lands 12000 samples before the next click.
+    run (p, head, 60000, [] (int n) { return n % 30000 < 10 ? 0.9f : 0.0f; });
+    check (p.getCapture().readBin (0).max > 0.8f, "main trigger at the left edge");
+    check (p.getSidechainCapture().readRange (0, amvscope::SyncedCapture::numBins).min < -0.4f,
+           "sidechain recorded in the same window");
+}
+
+void instancesSeeEachOther()
+{
+    TestPlayHead headA, headB;
+    AMVScopeAudioProcessor b;
+    b.setPlayHead (&headB);
+    prepare (b);
+
+    {
+        AMVScopeAudioProcessor a;
+        a.setPlayHead (&headA);
+        prepare (a);
+
+        check (b.getOtherSources().empty(), "silent instance not listed before it plays");
+
+        run (a, headA, blockSize * 4, [] (int) { return 0.3f; });
+        auto others = b.getOtherSources();
+        check (others.size() == 1, "B sees A");
+        check (! others.empty() && others[0]->ring.read (0.0, 0.01).max > 0.25f, "B reads A's signal");
+        check (a.getOtherSources().empty(), "A does not see B before B plays");
+
+        setParam (a, amvscope::params::send, 0.0f);
+        run (a, headA, blockSize, [] (int) { return 0.3f; });
+        check (b.getOtherSources().empty(), "Send off hides A");
+
+        setParam (a, amvscope::params::send, 1.0f);
+        run (a, headA, blockSize, [] (int) { return 0.3f; });
+
+        juce::AudioProcessor::TrackProperties props;
+        props.name = "Kick";
+        props.colourARGB = 0xffff0000;
+        a.updateTrackProperties (props);
+        check (b.getOtherSources().front()->getTrackName() == "Kick", "track name shared");
+
+        // The editor of B lists this track and A.
+        run (b, headB, blockSize * 4, [] (int) { return 0.1f; });
+        std::unique_ptr<juce::AudioProcessorEditor> ed (b.createEditor());
+        auto* editor = dynamic_cast<AMVScopeAudioProcessorEditor*> (ed.get());
+        editor->refresh();
+        const auto& traces = editor->getTraces();
+        check (traces.size() == 2, "editor shows two traces");
+        check (traces.size() == 2 && traces[1].label == "Kick", "other trace named after its track");
+
+        bool drawn = false;
+        for (const auto& c : traces.back().columns)
+            drawn = drawn || (c.filled && c.max > 0.25f);
+        check (drawn, "other trace has data on screen");
+    }
+
+    check (b.getOtherSources().empty(), "deleted instance disappears");
 }
 
 void stateRoundTrip()
@@ -207,7 +308,11 @@ void stateRoundTrip()
 void layouts()
 {
     AMVScopeAudioProcessor p;
-    juce::AudioProcessor::BusesLayout stereo, mono, mismatch;
+    juce::AudioProcessor::BusesLayout stereo, mono, mismatch, withSidechain;
+    withSidechain.inputBuses.add (juce::AudioChannelSet::stereo());
+    withSidechain.inputBuses.add (juce::AudioChannelSet::mono());
+    withSidechain.outputBuses.add (juce::AudioChannelSet::stereo());
+    check (p.isBusesLayoutSupported (withSidechain), "mono sidechain supported");
     stereo.inputBuses.add (juce::AudioChannelSet::stereo());
     stereo.outputBuses.add (juce::AudioChannelSet::stereo());
     mono.inputBuses.add (juce::AudioChannelSet::mono());
@@ -231,6 +336,9 @@ int main()
     triggerWhenStopped();
     triggerModeWhilePlaying();
     freezeStopsRecording();
+    sidechainIsRecorded();
+    sidechainInTriggerMode();
+    instancesSeeEachOther();
     stateRoundTrip();
     layouts();
 

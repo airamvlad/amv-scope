@@ -9,6 +9,9 @@ inline constexpr auto sync = "sync";
 inline constexpr auto zoom = "zoom";
 inline constexpr auto threshold = "threshold";
 inline constexpr auto freeze = "freeze";
+inline constexpr auto send = "send";
+inline constexpr auto showOthers = "showOthers";
+inline constexpr auto colourMode = "colourMode";
 
 /** Display window lengths, in the order of the Length menu. */
 inline const juce::StringArray lengthNames { "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars" };
@@ -32,6 +35,9 @@ inline double lengthInQuarters (int index, double quartersPerBar)
 enum class Sync { host = 0, trigger = 1 };
 inline const juce::StringArray syncNames { "Host", "Trigger" };
 
+enum class ColourMode { track = 0, frequency = 1 };
+inline const juce::StringArray colourModeNames { "Track", "Frequency" };
+
 inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 {
     using namespace juce;
@@ -53,6 +59,12 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         AudioParameterFloatAttributes().withLabel ("dB")));
 
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { freeze, 1 }, "Freeze", false));
+
+    // v0.2
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { send, 2 }, "Send to other instances", true));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { showOthers, 2 }, "Show other instances", true));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { colourMode, 2 }, "Colour",
+                                                        colourModeNames, 0));
 
     return layout;
 }
