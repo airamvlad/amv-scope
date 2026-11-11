@@ -28,10 +28,18 @@ AMVScopeAudioProcessor::AMVScopeAudioProcessor()
     channelParam = apvts.getRawParameterValue (amvscope::params::channel);
 
     ownSource = shared->add();
+    startTimer (1000);
+}
+
+void AMVScopeAudioProcessor::timerCallback()
+{
+    // Tells the other instances this one is still alive.
+    ownSource->beat();
 }
 
 AMVScopeAudioProcessor::~AMVScopeAudioProcessor()
 {
+    stopTimer();
     shared->remove (ownSource);
 }
 
@@ -82,9 +90,9 @@ void AMVScopeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     if (numChannels == 0 || numSamples == 0 || mono.size() < (size_t) numSamples)
         return;   // a block bigger than promised is skipped rather than allocating here
 
-    ownSource->sending.store (sendParam->load() >= 0.5f, std::memory_order_relaxed);
+    ownSource->sending.store (sendParam->load() >= 0.5f ? 1u : 0u, std::memory_order_relaxed);
     ownSource->offsetMs.store (offsetParam->load(), std::memory_order_relaxed);
-    ownSource->inverted.store (invertParam->load() >= 0.5f, std::memory_order_relaxed);
+    ownSource->inverted.store (invertParam->load() >= 0.5f ? 1u : 0u, std::memory_order_relaxed);
 
     const int channel = juce::roundToInt (channelParam->load());
     ownSource->channel.store (channel, std::memory_order_relaxed);
@@ -262,11 +270,10 @@ void AMVScopeAudioProcessor::captureTriggered (int numSamples, bool withSidechai
 
 std::vector<std::shared_ptr<amvscope::Source>> AMVScopeAudioProcessor::getOtherSources() const
 {
-    auto all = shared->list();
     std::vector<std::shared_ptr<amvscope::Source>> others;
 
-    for (auto& s : all)
-        if (s != ownSource && s->sending.load (std::memory_order_relaxed) && s->ring.hasData())
+    for (auto& s : shared->listOthers (*ownSource))
+        if (s->sending.load (std::memory_order_relaxed) != 0 && s->ring.hasData())
             others.push_back (s);
 
     return others;

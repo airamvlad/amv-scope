@@ -48,14 +48,28 @@ struct BinData
     }
 };
 
+/** One bin as stored. Plain atomics, so a row of them can live in memory shared between processes. */
+struct AtomicBin
+{
+    std::atomic<float> min, max, low, mid, high;
+    std::atomic<std::int64_t> pass;
+};
+
 class BinStore
 {
 public:
     static constexpr std::int64_t emptyPass = INT64_MIN;
 
-    explicit BinStore (std::size_t numBins) : bins (numBins) {}
+    /** Owns its bins. */
+    explicit BinStore (std::size_t numBins) : owned (numBins), bins (owned.data()), numBinsUsed (numBins) { clear(); }
 
-    std::size_t size() const noexcept { return bins.size(); }
+    /** Uses bins that live elsewhere (e.g. in shared memory); call clear() before first use. */
+    BinStore (AtomicBin* storage, std::size_t numBins) noexcept : bins (storage), numBinsUsed (numBins) {}
+
+    BinStore (const BinStore&) = delete;
+    BinStore& operator= (const BinStore&) = delete;
+
+    std::size_t size() const noexcept { return numBinsUsed; }
 
     /** Writer thread. A sample from a new pass replaces what the bin held. */
     void add (std::size_t index, std::int64_t pass, float sample, const Bands& b) noexcept
@@ -103,8 +117,8 @@ public:
 
     void clear() noexcept
     {
-        for (auto& bin : bins)
-            bin.pass.store (emptyPass, std::memory_order_relaxed);
+        for (std::size_t i = 0; i < numBinsUsed; ++i)
+            bins[i].pass.store (emptyPass, std::memory_order_relaxed);
     }
 
 private:
@@ -115,13 +129,9 @@ private:
             a.store (v, std::memory_order_relaxed);
     }
 
-    struct AtomicBin
-    {
-        std::atomic<float> min { 0.0f }, max { 0.0f }, low { 0.0f }, mid { 0.0f }, high { 0.0f };
-        std::atomic<std::int64_t> pass { emptyPass };
-    };
-
-    std::vector<AtomicBin> bins;
+    std::vector<AtomicBin> owned;
+    AtomicBin* bins = nullptr;
+    std::size_t numBinsUsed = 0;
 };
 
 } // namespace amvscope

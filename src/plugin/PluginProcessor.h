@@ -15,7 +15,8 @@
 #include <memory>
 #include <vector>
 
-class AMVScopeAudioProcessor final : public juce::AudioProcessor
+class AMVScopeAudioProcessor final : public juce::AudioProcessor,
+                                     private juce::Timer
 {
 public:
     AMVScopeAudioProcessor();
@@ -65,7 +66,7 @@ public:
     /** True while signal arrives on the sidechain input. */
     bool isSidechainActive() const noexcept { return sidechainActive.load (std::memory_order_relaxed); }
 
-    /** The other AMVScope instances in this process that send their signal. */
+    /** The other AMVScope instances (in this process or another) that send their signal. */
     std::vector<std::shared_ptr<amvscope::Source>> getOtherSources() const;
 
     /** True while the picture follows the host transport, false while it is triggered by level. */
@@ -79,12 +80,16 @@ public:
 
     double getBpm() const noexcept { return bpm.load (std::memory_order_relaxed); }
 
+    /** False: this instance cannot see instances in other processes (shared memory refused). */
+    bool seesOtherProcesses() const noexcept { return shared->isShared(); }
+
     /** The remembered picture ("ghost") drawn behind the live one. Kept here so it
         survives closing the plugin window; used by the UI thread only. */
     std::vector<amvscope::Trace> ghostTraces;
     double ghostWindowQuarters = 0.0;
 
 private:
+    void timerCallback() override;
     void captureTriggered (int numSamples, bool withSidechain, double samplesPerQuarter, double window, int midiHit);
 
     juce::SharedResourcePointer<amvscope::SharedSources> shared;

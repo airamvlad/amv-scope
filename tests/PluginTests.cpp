@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 namespace
@@ -585,6 +586,70 @@ void instancesSeeEachOther()
     check (b.getOtherSources().empty(), "deleted instance disappears");
 }
 
+void sharedMemoryReachesOtherProcesses()
+{
+    // A second mapping of the shared block stands in for another process:
+    // it has its own view of the memory, like a plugin in a separate host process.
+    TestPlayHead head;
+    AMVScopeAudioProcessor a;
+    a.setPlayHead (&head);
+    prepare (a);
+    check (a.seesOtherProcesses(), "shared memory is available");
+
+    juce::AudioProcessor::TrackProperties props;
+    props.name = juce::String::fromUTF8 ("Ba\xc5\xa1 bas");
+    props.colourARGB = 0xff123456;
+    a.updateTrackProperties (props);
+    setParam (a, amvscope::params::offset, 3.0f);
+    run (a, head, blockSize * 4, [] (int) { return 0.3f; });
+
+    amvscope::SharedSources elsewhere;
+    auto mine = elsewhere.add();
+    auto others = elsewhere.listOthers (*mine);
+    check (others.size() == 1, "the other process sees this instance");
+
+    if (others.size() == 1)
+    {
+        auto& s = *others[0];
+        check (&s.slot != &a.getOwnSource().slot, "through its own view of the memory");
+        check (s.ring.hasData() && s.ring.read (0.0, 0.01).max > 0.25f, "and reads its signal");
+        check (s.getTrackName() == *props.name, "track name crosses over");
+        check (s.getTrackColour() == juce::Colour (0xff123456), "track colour crosses over");
+        check (std::abs (s.offsetMs.load() - 3.0f) < 1e-4f, "offset crosses over");
+    }
+
+    // And the other way round.
+    const float value = 0.6f;
+    mine->ring.write (&value, nullptr, 1, 2.0, 1.0e-4);
+    auto seen = a.getOtherSources();
+    check (seen.size() == 1 && seen[0]->ring.read (2.0, 2.001).max > 0.5f, "this instance sees the other process");
+
+    // A process that died stops its heartbeat and drops out of the list.
+    mine->slot.heartbeatMs.store (juce::Time::currentTimeMillis() - amvscope::heartbeatTimeoutMs - 1000);
+    check (a.getOtherSources().empty(), "a dead instance disappears");
+
+    mine->beat();
+    elsewhere.remove (mine);
+    check (a.getOtherSources().empty(), "a removed instance disappears");
+}
+
+void slotsRunOut()
+{
+    // More instances than slots: the extra ones still work, alone.
+    std::vector<std::unique_ptr<AMVScopeAudioProcessor>> many;
+    for (std::size_t i = 0; i < amvscope::SharedBlock::numSlots + 2; ++i)
+        many.push_back (std::make_unique<AMVScopeAudioProcessor>());
+
+    TestPlayHead head;
+    auto& last = *many.back();
+    last.setPlayHead (&head);
+    prepare (last);
+    run (last, head, blockSize, [] (int) { return 0.3f; });
+    check (last.getOwnSource().id == 0, "instance beyond the last slot gets a private one");
+    check (last.getOwnSource().ring.read (0.0, 0.01).max > 0.25f, "and still records");
+    check (many.front()->getOtherSources().empty(), "others do not see silent or private instances");
+}
+
 void stateRoundTrip()
 {
     AMVScopeAudioProcessor a;
@@ -627,6 +692,9 @@ int main()
 {
     juce::ScopedJuceInitialiser_GUI juce;
 
+    // A block of our own, so the tests never meet a DAW that is running AMVScope.
+    amvscope::sharedBlockName() = "amvscope.test." + std::to_string (juce::Random::getSystemRandom().nextInt (1000000));
+
     audioPassesThroughUnchanged();
     hostSyncPlacesBeatsInPlace();
     barLengthFollowsTimeSignature();
@@ -645,8 +713,12 @@ int main()
     pictureIsSaved();
     ghostAndLevels();
     instancesSeeEachOther();
+    sharedMemoryReachesOtherProcesses();
+    slotsRunOut();
     stateRoundTrip();
     layouts();
+
+    amvscope::SharedMemory::forget (amvscope::sharedBlockName());
 
     if (failures == 0)
         std::printf ("All plugin tests passed.\n");

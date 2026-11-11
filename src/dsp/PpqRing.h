@@ -13,22 +13,42 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include "BinStore.h"
 
 namespace amvscope
 {
 
+/** Everything a PpqRing stores, in one block with a fixed layout, so it can sit
+    in memory shared between processes. All zero is not a valid state: clear() first. */
+struct RingStorage
+{
+    static constexpr std::size_t ringQuarters = 32;               // enough for 4 bars of 8/4
+    static constexpr std::size_t fineBinsPerQuarter = 2048;       // 512 per 1/16 note
+    static constexpr std::size_t coarseBinsPerQuarter = 256;
+
+    std::atomic<double> head;
+    std::atomic<std::uint32_t> everWritten;
+    AtomicBin fine[ringQuarters * fineBinsPerQuarter];
+    AtomicBin coarse[ringQuarters * coarseBinsPerQuarter];
+};
+
 class PpqRing
 {
 public:
-    static constexpr double ringQuarters = 32.0;              // enough for 4 bars of 8/4
-    static constexpr std::int64_t fineBinsPerQuarter = 2048;  // 512 per 1/16 note
-    static constexpr std::int64_t coarseBinsPerQuarter = 256;
+    static constexpr double ringQuarters = (double) RingStorage::ringQuarters;
+    static constexpr std::int64_t fineBinsPerQuarter = (std::int64_t) RingStorage::fineBinsPerQuarter;
+    static constexpr std::int64_t coarseBinsPerQuarter = (std::int64_t) RingStorage::coarseBinsPerQuarter;
 
-    PpqRing()
-        : fine ((std::size_t) (ringQuarters * fineBinsPerQuarter)),
-          coarse ((std::size_t) (ringQuarters * coarseBinsPerQuarter)) {}
+    /** Owns its storage. */
+    PpqRing() : PpqRing (std::make_unique<RingStorage>()) { clear(); }
+
+    /** Uses storage that lives elsewhere (e.g. in shared memory). Does not clear it. */
+    explicit PpqRing (RingStorage& external) noexcept
+        : storage (external),
+          fine (external.fine, RingStorage::ringQuarters * RingStorage::fineBinsPerQuarter),
+          coarse (external.coarse, RingStorage::ringQuarters * RingStorage::coarseBinsPerQuarter) {}
 
     /** Writer thread. ppq: position of the first sample; step: quarter notes per sample. */
     void write (const float* samples, const Bands* bands, std::size_t count, double ppq, double step) noexcept
@@ -44,13 +64,13 @@ public:
             add (coarse, coarseBinsPerQuarter, pos, samples[i], b);
         }
 
-        head.store (ppq + step * (double) (count - 1), std::memory_order_release);
-        everWritten.store (true, std::memory_order_release);
+        storage.head.store (ppq + step * (double) (count - 1), std::memory_order_release);
+        storage.everWritten.store (1, std::memory_order_release);
     }
 
     /** Position of the newest sample, in quarter notes. */
-    double getHead() const noexcept { return head.load (std::memory_order_acquire); }
-    bool hasData() const noexcept { return everWritten.load (std::memory_order_acquire); }
+    double getHead() const noexcept { return storage.head.load (std::memory_order_acquire); }
+    bool hasData() const noexcept { return storage.everWritten.load (std::memory_order_acquire) != 0; }
 
     /** Merged data for [fromQ, toQ). Bins written in a different lap of the ring
         (older or newer than this range) are ignored. */
@@ -82,7 +102,8 @@ public:
     {
         fine.clear();
         coarse.clear();
-        everWritten.store (false, std::memory_order_release);
+        storage.head.store (0.0, std::memory_order_release);
+        storage.everWritten.store (0, std::memory_order_release);
     }
 
 private:
@@ -100,9 +121,11 @@ private:
         store.add ((std::size_t) (n - lap * size), lap, sample, b);
     }
 
+    explicit PpqRing (std::unique_ptr<RingStorage> block) : PpqRing (*block) { owned = std::move (block); }
+
+    std::unique_ptr<RingStorage> owned;
+    RingStorage& storage;
     BinStore fine, coarse;
-    std::atomic<double> head { 0.0 };
-    std::atomic<bool> everWritten { false };
 };
 
 } // namespace amvscope

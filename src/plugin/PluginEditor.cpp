@@ -248,7 +248,7 @@ void AMVScopeAudioProcessorEditor::refresh()
                                             s->channel.load (std::memory_order_relaxed)),
                                colour, following, {} },
                              &s->ring, nullptr, s->offsetMs.load (std::memory_order_relaxed),
-                             s->inverted.load (std::memory_order_relaxed) });
+                             s->inverted.load (std::memory_order_relaxed) != 0 });
     }
 
     // Host mode: the window that holds the play position. Parts of it not
