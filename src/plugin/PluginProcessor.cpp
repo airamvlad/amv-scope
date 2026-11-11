@@ -22,6 +22,7 @@ AMVScopeAudioProcessor::AMVScopeAudioProcessor()
     thresholdParam = apvts.getRawParameterValue (amvscope::params::threshold);
     freezeParam = apvts.getRawParameterValue (amvscope::params::freeze);
     sendParam = apvts.getRawParameterValue (amvscope::params::send);
+    triggerSourceParam = apvts.getRawParameterValue (amvscope::params::triggerSource);
 
     ownSource = shared->add();
 }
@@ -205,7 +206,10 @@ void AMVScopeAudioProcessor::captureTriggered (int numSamples, bool withSidechai
     }
 
     // The detector sees the whole block so its holdoff and re-arming stay in step.
-    const long hit = trigger.process (mono.data(), (size_t) numSamples);
+    // With the sidechain as source, e.g. the kick starts the picture of the bass.
+    const bool fromSidechain = withSidechain
+        && juce::roundToInt (triggerSourceParam->load()) == (int) amvscope::params::TriggerSource::sidechain;
+    const long hit = trigger.process (fromSidechain ? sidechainMono.data() : mono.data(), (size_t) numSamples);
 
     if (! triggerRecording && hit >= start)
     {
