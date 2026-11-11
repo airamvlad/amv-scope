@@ -19,6 +19,13 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    bool keyPressed (const juce::KeyPress&) override;
 
     /** One signal on screen: this track, the sidechain, or another instance. */
     struct Trace
@@ -41,6 +48,13 @@ private:
                     float alpha) const;
     void drawOverlays (juce::Graphics&, juce::Rectangle<float> area) const;
     void drawLegend (juce::Graphics&);
+    void drawMeasure (juce::Graphics&, juce::Rectangle<float> area) const;
+
+    juce::Rectangle<float> getPlotArea() const { return scopeArea.toFloat().reduced (1.0f, 8.0f); }
+    double windowMilliseconds() const;
+    void setParam (const char* id, float value);
+    void toggleParam (const char* id);
+    void saveHidden();
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ComboAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
@@ -49,13 +63,13 @@ private:
     AMVScopeAudioProcessor& processor;
     juce::LookAndFeel_V4 lookAndFeel;
 
-    juce::Label lengthLabel, syncLabel, zoomLabel, thresholdLabel, colourLabel;
-    juce::ComboBox lengthBox, syncBox, colourBox;
+    juce::Label lengthLabel, syncLabel, zoomLabel, thresholdLabel, colourLabel, sourceLabel;
+    juce::ComboBox lengthBox, syncBox, colourBox, sourceBox;
     juce::Slider zoomSlider, thresholdSlider;
     juce::TextButton freezeButton { "Freeze" };
     juce::ToggleButton sendButton { "Send" }, othersButton { "Show others" };
 
-    std::unique_ptr<ComboAttachment> lengthAttachment, syncAttachment, colourAttachment;
+    std::unique_ptr<ComboAttachment> lengthAttachment, syncAttachment, colourAttachment, sourceAttachment;
     std::unique_ptr<SliderAttachment> zoomAttachment, thresholdAttachment;
     std::unique_ptr<ButtonAttachment> freezeAttachment, sendAttachment, othersAttachment;
 
@@ -65,6 +79,11 @@ private:
     std::map<juce::String, bool> hidden;
     std::vector<std::pair<juce::Rectangle<int>, juce::String>> legendHits;
     bool frozenView = false;
+
+    // Mouse readout: positions are fractions of the plot (0..1 across, 0..1 down).
+    bool hovering = false, measuring = false;
+    juce::Point<float> hoverPos;
+    float measureFrom = 0.0f, measureTo = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVScopeAudioProcessorEditor)
 };

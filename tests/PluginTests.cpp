@@ -237,6 +237,56 @@ void sidechainInTriggerMode()
            "sidechain recorded in the same window");
 }
 
+void triggerFromSidechain()
+{
+    // Main input is a steady quiet tone that never crosses the trigger level;
+    // the sidechain click (half a beat after each main "beat") starts the picture.
+    AMVScopeAudioProcessor p;
+    TestPlayHead head;
+    head.playing = false;
+    p.setPlayHead (&head);
+    p.enableAllBuses();
+    p.setRateAndBufferSizeDetails (sampleRate, blockSize);
+    p.prepareToPlay (sampleRate, blockSize);
+    setParam (p, amvscope::params::length, 0.0f);          // 1/16 = 6000 samples
+    setParam (p, amvscope::params::threshold, -12.0f);     // 0.25; sidechain click is 0.45
+
+    auto gen = [] (int n) { return n % 30000 < 10 ? 0.9f : 0.0f; };
+
+    setParam (p, amvscope::params::triggerSource, 1.0f);
+    run (p, head, 60000, gen);
+    check (p.getSidechainCapture().readBin (0).min < -0.4f, "sidechain click at the left edge");
+    check (p.getCapture().readBin (0).max < 0.01f, "main is silent where the sidechain triggered");
+}
+
+void editorKeysAndSize()
+{
+    AMVScopeAudioProcessor p;
+    prepare (p);
+    juce::MemoryBlock data;
+
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+        check (ed->isResizable(), "window is resizable");
+        ed->setSize (1280, 720);
+
+        check (ed->keyPressed (juce::KeyPress ('f', {}, 'f')), "F handled");
+        check (p.apvts.getRawParameterValue (amvscope::params::freeze)->load() >= 0.5f, "F freezes");
+        ed->keyPressed (juce::KeyPress ('5', {}, '5'));
+        check (juce::roundToInt (p.apvts.getRawParameterValue (amvscope::params::length)->load()) == 4, "5 picks 1 bar");
+        ed->keyPressed (juce::KeyPress ('+', {}, '+'));
+        check (p.apvts.getRawParameterValue (amvscope::params::zoom)->load() > 1.4f, "+ zooms in");
+        check (! ed->keyPressed (juce::KeyPress ('q', {}, 'q')), "other keys are left to the host");
+
+        p.getStateInformation (data);
+    }
+
+    AMVScopeAudioProcessor q;
+    q.setStateInformation (data.getData(), (int) data.getSize());
+    std::unique_ptr<juce::AudioProcessorEditor> ed (q.createEditor());
+    check (ed->getWidth() == 1280 && ed->getHeight() == 720, "window size restored");
+}
+
 void instancesSeeEachOther()
 {
     TestPlayHead headA, headB;
@@ -338,6 +388,8 @@ int main()
     freezeStopsRecording();
     sidechainIsRecorded();
     sidechainInTriggerMode();
+    triggerFromSidechain();
+    editorKeysAndSize();
     instancesSeeEachOther();
     stateRoundTrip();
     layouts();

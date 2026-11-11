@@ -76,10 +76,13 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     setupLabel (zoomLabel, "Zoom");
     setupLabel (thresholdLabel, "Trigger");
     setupLabel (colourLabel, "Colour");
+    setupLabel (sourceLabel, "Trig from");
 
     lengthBox.addItemList (amvscope::params::lengthNames, 1);
     syncBox.addItemList (amvscope::params::syncNames, 1);
     colourBox.addItemList (amvscope::params::colourModeNames, 1);
+    sourceBox.addItemList (amvscope::params::triggerSourceNames, 1);
+    sourceBox.setTooltip ("Which signal starts the picture in trigger mode. Sidechain: e.g. the kick starts the view of the bass.");
     setupSlider (zoomSlider);
     setupSlider (thresholdSlider);
     freezeButton.setClickingTogglesState (true);
@@ -93,8 +96,8 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     othersButton.setTooltip ("Show the tracks of other AMVScope instances (host sync only)");
 
     for (auto* c : std::initializer_list<juce::Component*> {
-             &lengthLabel, &syncLabel, &zoomLabel, &thresholdLabel, &colourLabel, &lengthBox, &syncBox,
-             &colourBox, &zoomSlider, &thresholdSlider, &freezeButton, &sendButton, &othersButton })
+             &lengthLabel, &syncLabel, &zoomLabel, &thresholdLabel, &colourLabel, &sourceLabel, &lengthBox,
+             &syncBox, &colourBox, &sourceBox, &zoomSlider, &thresholdSlider, &freezeButton, &sendButton, &othersButton })
         addAndMakeVisible (c);
 
     auto& apvts = processor.apvts;
@@ -102,14 +105,29 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     lengthAttachment = std::make_unique<ComboAttachment> (apvts, ids::length, lengthBox);
     syncAttachment = std::make_unique<ComboAttachment> (apvts, ids::sync, syncBox);
     colourAttachment = std::make_unique<ComboAttachment> (apvts, ids::colourMode, colourBox);
+    sourceAttachment = std::make_unique<ComboAttachment> (apvts, ids::triggerSource, sourceBox);
     zoomAttachment = std::make_unique<SliderAttachment> (apvts, ids::zoom, zoomSlider);
     thresholdAttachment = std::make_unique<SliderAttachment> (apvts, ids::threshold, thresholdSlider);
     freezeAttachment = std::make_unique<ButtonAttachment> (apvts, ids::freeze, freezeButton);
     sendAttachment = std::make_unique<ButtonAttachment> (apvts, ids::send, sendButton);
     othersAttachment = std::make_unique<ButtonAttachment> (apvts, ids::showOthers, othersButton);
 
+    // Controls must not keep the keyboard, or the shortcuts stop after one click.
+    for (auto* c : std::initializer_list<juce::Component*> { &lengthBox, &syncBox, &colourBox, &sourceBox,
+                                                              &freezeButton, &sendButton, &othersButton })
+        c->setWantsKeyboardFocus (false);
+
+    for (const auto& key : juce::StringArray::fromTokens (apvts.state.getProperty ("hidden").toString(), ",", ""))
+        hidden[key] = true;
+
     setOpaque (true);
-    setSize (960, 580);
+    setWantsKeyboardFocus (true);
+    // Read the saved size first: setting the limits already resizes the window.
+    const int savedWidth = juce::jlimit (900, 3840, (int) apvts.state.getProperty ("editorWidth", 960));
+    const int savedHeight = juce::jlimit (420, 2160, (int) apvts.state.getProperty ("editorHeight", 580));
+    setResizable (true, true);
+    setResizeLimits (900, 420, 3840, 2160);
+    setSize (savedWidth, savedHeight);
     refresh();
     startTimerHz (60);
 }
@@ -235,11 +253,18 @@ void AMVScopeAudioProcessorEditor::resized()
         r.removeFromLeft (14);
     };
 
+    // The two sliders share whatever width is left.
+    const int fixed = (48 + 6 + 86 + 14) + (34 + 6 + 86 + 14) + (38 + 6 + 14) + (48 + 6 + 14) + 72;
+    const int sliderWidth = juce::jlimit (110, 260, (row.getWidth() - fixed) / 2);
+
     place (row, lengthLabel, lengthBox, 48, 86);
     place (row, syncLabel, syncBox, 34, 86);
-    place (row, zoomLabel, zoomSlider, 38, 150);
-    place (row, thresholdLabel, thresholdSlider, 48, 160);
+    place (row, zoomLabel, zoomSlider, 38, sliderWidth);
+    place (row, thresholdLabel, thresholdSlider, 48, sliderWidth);
     freezeButton.setBounds (row.removeFromRight (72));
+
+    processor.apvts.state.setProperty ("editorWidth", getWidth(), nullptr);
+    processor.apvts.state.setProperty ("editorHeight", getHeight(), nullptr);
 
     auto foot = footerArea.withSizeKeepingCentre (footerArea.getWidth(), 26);
     othersButton.setBounds (foot.removeFromRight (110));
@@ -249,6 +274,10 @@ void AMVScopeAudioProcessorEditor::resized()
     colourBox.setBounds (foot.removeFromRight (100));
     foot.removeFromRight (6);
     colourLabel.setBounds (foot.removeFromRight (46));
+    foot.removeFromRight (14);
+    sourceBox.setBounds (foot.removeFromRight (106));
+    foot.removeFromRight (6);
+    sourceLabel.setBounds (foot.removeFromRight (58));
     foot.removeFromRight (14);
     legendArea = foot;
 }
@@ -261,6 +290,7 @@ void AMVScopeAudioProcessorEditor::mouseUp (const juce::MouseEvent& e)
         if (rect.contains (e.getPosition()))
         {
             hidden[key] = ! hidden[key];
+            saveHidden();
             frozenView = false;
             refresh();
             repaint();
@@ -294,6 +324,7 @@ void AMVScopeAudioProcessorEditor::paint (juce::Graphics& g)
             drawTrace (g, inner, *it, frequency && it->key == "own", it->key == "own" ? 1.0f : 0.85f);
 
     drawOverlays (g, inner);
+    drawMeasure (g, inner);
     drawLegend (g);
 }
 
@@ -422,5 +453,168 @@ void AMVScopeAudioProcessorEditor::drawLegend (juce::Graphics& g)
 
         if (isHidden)
             g.drawHorizontalLine (chip.getCentreY(), (float) chip.getX() + 22.0f, (float) chip.getRight() - 14.0f);
+    }
+}
+
+//==============================================================================
+// Mouse readout, keys, saved view
+
+double AMVScopeAudioProcessorEditor::windowMilliseconds() const
+{
+    return processor.getWindowQuarters() * 60000.0 / juce::jmax (1.0, processor.getBpm());
+}
+
+void AMVScopeAudioProcessorEditor::setParam (const char* id, float value)
+{
+    if (auto* param = processor.apvts.getParameter (id))
+    {
+        param->beginChangeGesture();
+        param->setValueNotifyingHost (param->convertTo0to1 (value));
+        param->endChangeGesture();
+    }
+}
+
+void AMVScopeAudioProcessorEditor::toggleParam (const char* id)
+{
+    setParam (id, processor.apvts.getRawParameterValue (id)->load() >= 0.5f ? 0.0f : 1.0f);
+}
+
+void AMVScopeAudioProcessorEditor::saveHidden()
+{
+    // Only this track and the sidechain: other instances get new ids in every session.
+    juce::StringArray keys;
+    for (const auto* key : { "own", "sidechain" })
+        if (hidden[key])
+            keys.add (key);
+
+    processor.apvts.state.setProperty ("hidden", keys.joinIntoString (","), nullptr);
+}
+
+void AMVScopeAudioProcessorEditor::mouseMove (const juce::MouseEvent& e)
+{
+    const auto plot = getPlotArea();
+    hovering = plot.contains (e.position);
+
+    if (hovering)
+        hoverPos = { (e.position.x - plot.getX()) / plot.getWidth(), (e.position.y - plot.getY()) / plot.getHeight() };
+}
+
+void AMVScopeAudioProcessorEditor::mouseExit (const juce::MouseEvent&)
+{
+    hovering = false;
+}
+
+void AMVScopeAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
+{
+    grabKeyboardFocus();
+
+    const auto plot = getPlotArea();
+
+    if (plot.contains (e.position))
+    {
+        // Start a new time measurement; a plain click clears the old one.
+        measuring = false;
+        measureFrom = measureTo = (e.position.x - plot.getX()) / plot.getWidth();
+    }
+}
+
+void AMVScopeAudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
+{
+    const auto plot = getPlotArea();
+
+    if (! plot.contains (e.mouseDownPosition))
+        return;
+
+    measureTo = juce::jlimit (0.0f, 1.0f, (e.position.x - plot.getX()) / plot.getWidth());
+    measuring = std::abs (measureTo - measureFrom) * plot.getWidth() >= 2.0f;
+    mouseMove (e);
+}
+
+void AMVScopeAudioProcessorEditor::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    // Double click on the plot: zoom back to 1x.
+    if (getPlotArea().contains (e.position))
+        setParam (amvscope::params::zoom, 1.0f);
+}
+
+void AMVScopeAudioProcessorEditor::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    if (! getPlotArea().contains (e.position))
+        return;
+
+    const float zoom = processor.apvts.getRawParameterValue (amvscope::params::zoom)->load();
+    setParam (amvscope::params::zoom, juce::jlimit (1.0f, 32.0f, zoom * std::pow (2.0f, wheel.deltaY * 2.0f)));
+}
+
+bool AMVScopeAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
+{
+    namespace ids = amvscope::params;
+    const auto c = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
+    const float zoom = processor.apvts.getRawParameterValue (ids::zoom)->load();
+
+    if (c >= '1' && c <= '7')                         setParam (ids::length, (float) (c - '1'));
+    else if (c == 'f' || key == juce::KeyPress::spaceKey) toggleParam (ids::freeze);
+    else if (c == 's')                                toggleParam (ids::sync);
+    else if (c == 'c')                                toggleParam (ids::colourMode);
+    else if (c == 'o')                                toggleParam (ids::showOthers);
+    else if (c == '+' || c == '=' || key == juce::KeyPress::upKey)   setParam (ids::zoom, juce::jmin (32.0f, zoom * 1.5f));
+    else if (c == '-' || key == juce::KeyPress::downKey)             setParam (ids::zoom, juce::jmax (1.0f, zoom / 1.5f));
+    else if (key == juce::KeyPress::escapeKey)        measuring = false;
+    else                                              return false;
+
+    return true;
+}
+
+void AMVScopeAudioProcessorEditor::drawMeasure (juce::Graphics& g, juce::Rectangle<float> area) const
+{
+    const double windowMs = windowMilliseconds();
+    g.setFont (juce::FontOptions (12.0f));
+
+    auto label = [&] (const juce::String& s, float x, float y)
+    {
+        const int w = juce::GlyphArrangement::getStringWidthInt (juce::Font (juce::FontOptions (12.0f)), s) + 12;
+        auto box = juce::Rectangle<float> (x + 8.0f, y, (float) w, 20.0f);
+
+        if (box.getRight() > area.getRight())
+            box.setX (x - 8.0f - (float) w);
+
+        box.setY (juce::jlimit (area.getY(), area.getBottom() - 20.0f, y));
+        g.setColour (background.withAlpha (0.85f));
+        g.fillRoundedRectangle (box, 4.0f);
+        g.setColour (text);
+        g.drawText (s, box.toNearestInt(), juce::Justification::centred);
+    };
+
+    if (measuring)
+    {
+        const float a = juce::jmin (measureFrom, measureTo), b = juce::jmax (measureFrom, measureTo);
+        const float xa = area.getX() + a * area.getWidth(), xb = area.getX() + b * area.getWidth();
+
+        g.setColour (text.withAlpha (0.08f));
+        g.fillRect (xa, area.getY(), xb - xa, area.getHeight());
+        g.setColour (text.withAlpha (0.6f));
+        g.drawVerticalLine (juce::roundToInt (xa), area.getY(), area.getBottom());
+        g.drawVerticalLine (juce::roundToInt (xb), area.getY(), area.getBottom());
+
+        const double ms = (double) (b - a) * windowMs;
+        label (juce::String (ms, 1) + " ms  =  " + juce::String (1000.0 / juce::jmax (0.001, ms), 1) + " Hz",
+               xb, area.getY() + 24.0f);
+    }
+
+    if (hovering)
+    {
+        const float x = area.getX() + hoverPos.x * area.getWidth();
+        const float y = area.getY() + hoverPos.y * area.getHeight();
+        const float zoom = processor.apvts.getRawParameterValue (amvscope::params::zoom)->load();
+        const float level = std::abs (1.0f - 2.0f * hoverPos.y) / zoom;
+
+        g.setColour (text.withAlpha (0.25f));
+        g.drawVerticalLine (juce::roundToInt (x), area.getY(), area.getBottom());
+        g.drawHorizontalLine (juce::roundToInt (y), area.getX(), area.getRight());
+
+        label (juce::String ((double) hoverPos.x * windowMs, 1) + " ms   "
+                   + (level < 1.0e-4f ? juce::String ("-inf") : juce::String (juce::Decibels::gainToDecibels (level), 1))
+                   + " dB",
+               x, y - 26.0f);
     }
 }

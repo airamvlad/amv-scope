@@ -12,6 +12,7 @@ inline constexpr auto freeze = "freeze";
 inline constexpr auto send = "send";
 inline constexpr auto showOthers = "showOthers";
 inline constexpr auto colourMode = "colourMode";
+inline constexpr auto triggerSource = "triggerSource";
 
 /** Display window lengths, in the order of the Length menu. */
 inline const juce::StringArray lengthNames { "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars" };
@@ -34,6 +35,9 @@ inline double lengthInQuarters (int index, double quartersPerBar)
 
 enum class Sync { host = 0, trigger = 1 };
 inline const juce::StringArray syncNames { "Host", "Trigger" };
+
+enum class TriggerSource { main = 0, sidechain = 1 };
+inline const juce::StringArray triggerSourceNames { "This track", "Sidechain" };
 
 enum class ColourMode { track = 0, frequency = 1 };
 inline const juce::StringArray colourModeNames { "Track", "Frequency" };
@@ -65,6 +69,10 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { showOthers, 2 }, "Show other instances", true));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { colourMode, 2 }, "Colour",
                                                         colourModeNames, 0));
+
+    // v0.3
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { triggerSource, 3 }, "Trigger source",
+                                                        triggerSourceNames, 0));
 
     return layout;
 }
