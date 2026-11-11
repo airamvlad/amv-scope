@@ -13,6 +13,8 @@ inline constexpr auto send = "send";
 inline constexpr auto showOthers = "showOthers";
 inline constexpr auto colourMode = "colourMode";
 inline constexpr auto triggerSource = "triggerSource";
+inline constexpr auto offset = "offset";
+inline constexpr auto invert = "invert";
 
 /** Display window lengths, in the order of the Length menu. */
 inline const juce::StringArray lengthNames { "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars" };
@@ -73,6 +75,12 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     // v0.3
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { triggerSource, 3 }, "Trigger source",
                                                         triggerSourceNames, 0));
+
+    // v0.4: display-only shift and polarity of this track, for checking phase.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { offset, 4 }, "Offset", NormalisableRange<float> (-50.0f, 50.0f, 0.1f), 0.0f,
+        AudioParameterFloatAttributes().withLabel ("ms")));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { invert, 4 }, "Invert", false));
 
     return layout;
 }

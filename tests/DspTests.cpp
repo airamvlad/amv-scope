@@ -1,6 +1,7 @@
 // Unit tests for the plain C++ DSP core.
 
 #include "dsp/BandSplitter.h"
+#include "dsp/Correlation.h"
 #include "dsp/PpqRing.h"
 #include "dsp/SyncedCapture.h"
 #include "dsp/TriggerDetector.h"
@@ -190,6 +191,34 @@ void bandsFollowFrequency()
     check (voice.mid > voice.low && voice.mid > voice.high, "800 Hz is mostly mid");
     check (hat.high > 0.9f && hat.low < 0.01f, "10 kHz is high");
 }
+void correlationBasics()
+{
+    const std::size_t n = 600;
+    std::vector<float> kick (n), same (n), flipped (n), late (n, 0.0f);
+    std::vector<bool> valid (n, true);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const double t = (double) i / (double) n;
+        kick[i] = (float) (std::exp (-t * 6.0) * std::sin (2.0 * 3.141592653589793 * (4.0 + 30.0 * std::exp (-t * 12.0)) * t));
+        same[i] = kick[i];
+        flipped[i] = -kick[i];
+        if (i >= 7) late[i] = kick[i - 7];
+    }
+
+    check (amvscope::correlation (kick, same, valid) > 0.999f, "identical signals: +1");
+    check (amvscope::correlation (kick, flipped, valid) < -0.999f, "flipped signal: -1");
+
+    const auto best = amvscope::findBestShift (kick, late, valid, 40);
+    check (best.shift == 7 && ! best.inverted && best.correlation > 0.99f, "finds a 7 sample delay");
+
+    for (auto& v : late) v = -v;
+    const auto bestInv = amvscope::findBestShift (kick, late, valid, 40);
+    check (bestInv.shift == 7 && bestInv.inverted, "finds a delayed, flipped copy");
+
+    std::vector<bool> none (n, false);
+    check (amvscope::correlation (kick, same, none) == 0.0f, "no data: 0");
+}
 } // namespace
 
 int main()
@@ -206,6 +235,7 @@ int main()
     ringRejectsOtherLaps();
     storeFiltersByPass();
     bandsFollowFrequency();
+    correlationBasics();
 
     if (failures == 0)
         std::printf ("All DSP tests passed.\n");

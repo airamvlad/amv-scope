@@ -37,6 +37,22 @@ public:
         std::vector<amvscope::BinData> columns;
     };
 
+    /** How this track lines up with another signal on screen. */
+    struct PhaseInfo
+    {
+        bool valid = false;            // false: nothing to compare with, or the window is too long
+        juce::String partner;          // name of the signal this track is compared with
+        float correlation = 0.0f;      // -1..+1 as shown now
+        float suggestedOffsetMs = 0.0f;   // value for Offset that gives the best match
+        bool suggestedInvert = false;
+        float suggestedCorrelation = 0.0f;
+    };
+
+    const PhaseInfo& getPhaseInfo() const noexcept { return phase; }
+
+    /** Sets Offset and Invert to the suggested values. */
+    void alignToSuggestion();
+
     /** Rebuilds the traces from the processor. Called by the timer; public for tests. */
     void refresh();
     const std::vector<Trace>& getTraces() const noexcept { return traces; }
@@ -49,6 +65,8 @@ private:
     void drawOverlays (juce::Graphics&, juce::Rectangle<float> area) const;
     void drawLegend (juce::Graphics&);
     void drawMeasure (juce::Graphics&, juce::Rectangle<float> area) const;
+    void drawPhase (juce::Graphics&, juce::Rectangle<float> area) const;
+    void updatePhase();
 
     juce::Rectangle<float> getPlotArea() const { return scopeArea.toFloat().reduced (1.0f, 8.0f); }
     double windowMilliseconds() const;
@@ -63,22 +81,26 @@ private:
     AMVScopeAudioProcessor& processor;
     juce::LookAndFeel_V4 lookAndFeel;
 
-    juce::Label lengthLabel, syncLabel, zoomLabel, thresholdLabel, colourLabel, sourceLabel;
+    juce::Label lengthLabel, syncLabel, zoomLabel, thresholdLabel, colourLabel, sourceLabel, offsetLabel;
     juce::ComboBox lengthBox, syncBox, colourBox, sourceBox;
-    juce::Slider zoomSlider, thresholdSlider;
+    juce::Slider zoomSlider, thresholdSlider, offsetSlider;
     juce::TextButton freezeButton { "Freeze" };
-    juce::ToggleButton sendButton { "Send" }, othersButton { "Show others" };
+    juce::ToggleButton sendButton { "Send" }, othersButton { "Show others" }, invertButton { "Invert" };
+    juce::TextButton alignButton { "Align" };
 
     std::unique_ptr<ComboAttachment> lengthAttachment, syncAttachment, colourAttachment, sourceAttachment;
-    std::unique_ptr<SliderAttachment> zoomAttachment, thresholdAttachment;
-    std::unique_ptr<ButtonAttachment> freezeAttachment, sendAttachment, othersAttachment;
+    std::unique_ptr<SliderAttachment> zoomAttachment, thresholdAttachment, offsetAttachment;
+    std::unique_ptr<ButtonAttachment> freezeAttachment, sendAttachment, othersAttachment, invertAttachment;
 
-    juce::Rectangle<int> headerArea, footerArea, scopeArea, legendArea;
+    juce::Rectangle<int> headerArea, footerArea, scopeArea, legendArea, phaseArea;
 
     std::vector<Trace> traces;
     std::map<juce::String, bool> hidden;
     std::vector<std::pair<juce::Rectangle<int>, juce::String>> legendHits;
     bool frozenView = false;
+
+    PhaseInfo phase;
+    int phaseCountdown = 0;
 
     // Mouse readout: positions are fractions of the plot (0..1 across, 0..1 down).
     bool hovering = false, measuring = false;

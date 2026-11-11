@@ -112,6 +112,8 @@ private:
     std::atomic<float>* freezeParam = nullptr;
     std::atomic<float>* sendParam = nullptr;
     std::atomic<float>* triggerSourceParam = nullptr;
+    std::atomic<float>* offsetParam = nullptr;
+    std::atomic<float>* invertParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVScopeAudioProcessor)
 };

@@ -62,8 +62,10 @@ public:
         const auto perQuarter = useFine ? fineBinsPerQuarter : coarseBinsPerQuarter;
         const auto size = (std::int64_t) store.size();
 
-        auto first = (std::int64_t) std::floor (fromQ * (double) perQuarter);
-        auto last = (std::int64_t) std::ceil (toQ * (double) perQuarter);
+        // Round both ends to the nearest bin edge, so neighbouring ranges tile
+        // without overlapping and a shifted read stays the same width.
+        auto first = (std::int64_t) std::floor (fromQ * (double) perQuarter + 0.5);
+        auto last = (std::int64_t) std::floor (toQ * (double) perQuarter + 0.5);
         if (last <= first)
             last = first + 1;
 

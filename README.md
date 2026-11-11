@@ -5,7 +5,7 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
 
 ![AMVScope](docs/screenshot.png)
 
-## Šta radi (verzija 0.3)
+## Šta radi (verzija 0.4)
 
 - **Prikaz sinhronizovan sa tempom:** dok Bitwig svira, talasni oblik se crta na mestu u taktu, pa slika stoji mirno dok se muzika ponavlja. Udarac kicka je uvek na istom mestu, a bas posle njega se vidi tačno u odnosu na kick.
 - **Length:** dužina prikaza 1/16, 1/8, 1/4, 1/2, 1 takt, 2 ili 4 takta (prati takt projekta, npr. 3/4). Za kick i bas je obično najbolje 1/4.
@@ -18,6 +18,13 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
   - **Sidechain:** signal doveden na sidechain ulaz plugina crta se narandžasto, i u Host i u Trigger režimu.
   - Klik na ime u legendi dole levo sakriva ili prikazuje taj signal.
 - **Colour:** *Track* (svaki signal u boji svoje trake) ili *Frequency* (ova traka obojena po sadržaju: crveno niske, zeleno srednje, plavo visoke frekvencije).
+- **Faza (donji red):** merač pokazuje koliko se ova traka slaže sa drugim signalom na ekranu (prvi vidljivi: sidechain ili druga instanca). `+1` znači da se talasi poklapaju i sabiraju, `0` da nemaju veze, `-1` da se poništavaju. Pored piše i predlog: za koliko ms treba pomeriti ovu traku (i da li okrenuti polaritet) da slaganje bude najbolje.
+  - **Offset** pomera ovu traku na ekranu (u ms, plus znači kasnije), **Invert** joj okreće polaritet, a **Align** postavlja oba na predloženu vrednost. Pomak vide i ostale instance.
+  - Ovo menja samo prikaz, ne i zvuk. Kad nađeš vrednost koja ti odgovara, isti pomak podesi u Bitwigu (kašnjenje trake ili *Time Shift* uređaj) i polaritet po potrebi.
+  - Merač radi kad je *Length* 1/2 ili kraće.
+
+![Phase](docs/screenshot-phase.png)
+
 - **Merenje mišem:** pomeranjem miša preko prikaza vidiš vreme od početka prozora (ms) i nivo (dB). Prevuci mišem da izmeriš razmak između dve tačke, u ms i Hz (npr. dužinu repa kicka ili jednu periodu basa). Klik briše merenje.
 - **Zoom točkićem** miša preko prikaza; dupli klik vraća na 1x.
 - **Trig from:** u Trigger režimu sliku može da pokreće i sidechain (npr. kick pokreće prikaz basa).
@@ -35,6 +42,8 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
 - [x] v0.1: talasni oblik sinhronizovan sa tempom (1/16 do 4 takta), zoom po amplitudi, freeze, trigger po nivou kad transport ne svira
 - [x] v0.2: više signala (sidechain ulaz ili deljenje između instanci), prikaz jedan preko drugog u bojama, bojenje po frekvenciji
 - [x] v0.3: promenljiva veličina prozora, tasteri, podešavanja koja se pamte u projektu
+- [x] v0.4: faza između traka (korelacija, pomak, polaritet, predlog poravnanja)
+- [ ] v0.5: prikaz po opsezima (niske, srednje, visoke odvojeno)
 
 ## Preuzimanje i instalacija
 

@@ -1,6 +1,8 @@
 #include "PluginEditor.h"
 #include <iterator>
 
+#include "dsp/Correlation.h"
+
 namespace
 {
 const juce::Colour background { 0xff15171c };
@@ -77,6 +79,15 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     setupLabel (thresholdLabel, "Trigger");
     setupLabel (colourLabel, "Colour");
     setupLabel (sourceLabel, "Trig from");
+    setupLabel (offsetLabel, "Offset");
+    setupSlider (offsetSlider);
+    offsetSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 22);
+    offsetSlider.setDoubleClickReturnValue (true, 0.0);
+    offsetSlider.setTooltip ("Moves this track on screen (ms, positive = later) to try out a delay. "
+                             "Display only: apply the same delay in the DAW to change the sound.");
+    invertButton.setTooltip ("Flips this track's polarity on screen");
+    alignButton.setTooltip ("Sets Offset and Invert to the best match with the compared signal");
+    alignButton.onClick = [this] { alignToSuggestion(); };
 
     lengthBox.addItemList (amvscope::params::lengthNames, 1);
     syncBox.addItemList (amvscope::params::syncNames, 1);
@@ -97,7 +108,7 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
 
     for (auto* c : std::initializer_list<juce::Component*> {
              &lengthLabel, &syncLabel, &zoomLabel, &thresholdLabel, &colourLabel, &sourceLabel, &lengthBox,
-             &syncBox, &colourBox, &sourceBox, &zoomSlider, &thresholdSlider, &freezeButton, &sendButton, &othersButton })
+             &syncBox, &colourBox, &sourceBox, &offsetLabel, &offsetSlider, &invertButton, &alignButton, &zoomSlider, &thresholdSlider, &freezeButton, &sendButton, &othersButton })
         addAndMakeVisible (c);
 
     auto& apvts = processor.apvts;
@@ -111,10 +122,13 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     freezeAttachment = std::make_unique<ButtonAttachment> (apvts, ids::freeze, freezeButton);
     sendAttachment = std::make_unique<ButtonAttachment> (apvts, ids::send, sendButton);
     othersAttachment = std::make_unique<ButtonAttachment> (apvts, ids::showOthers, othersButton);
+    offsetAttachment = std::make_unique<SliderAttachment> (apvts, ids::offset, offsetSlider);
+    invertAttachment = std::make_unique<ButtonAttachment> (apvts, ids::invert, invertButton);
 
     // Controls must not keep the keyboard, or the shortcuts stop after one click.
     for (auto* c : std::initializer_list<juce::Component*> { &lengthBox, &syncBox, &colourBox, &sourceBox,
-                                                              &freezeButton, &sendButton, &othersButton })
+                                                              &freezeButton, &sendButton, &othersButton,
+                                                              &invertButton, &alignButton })
         c->setWantsKeyboardFocus (false);
 
     for (const auto& key : juce::StringArray::fromTokens (apvts.state.getProperty ("hidden").toString(), ",", ""))
@@ -140,7 +154,7 @@ AMVScopeAudioProcessorEditor::~AMVScopeAudioProcessorEditor()
 void AMVScopeAudioProcessorEditor::timerCallback()
 {
     refresh();
-    repaint (scopeArea.getUnion (legendArea));
+    repaint (scopeArea.getUnion (legendArea).getUnion (phaseArea));
 }
 
 void AMVScopeAudioProcessorEditor::refresh()
@@ -160,18 +174,27 @@ void AMVScopeAudioProcessorEditor::refresh()
     std::vector<Trace> next;
 
     // Each trace: where it comes from in host mode (a ring) or trigger mode (a capture).
-    struct Pending { Trace trace; const amvscope::PpqRing* ring; const amvscope::SyncedCapture* capture; };
+    struct Pending
+    {
+        Trace trace;
+        const amvscope::PpqRing* ring;
+        const amvscope::SyncedCapture* capture;
+        float offsetMs = 0.0f;   // display shift, positive = later
+        bool inverted = false;
+    };
     std::vector<Pending> pending;
 
     const auto& own = processor.getOwnSource();
     const auto ownName = own.getTrackName();
     pending.push_back ({ { "own", ownName.isNotEmpty() ? ownName : "This track",
                            hasColour (own.getTrackColour()) ? own.getTrackColour() : ownColour, true, {} },
-                         &own.ring, &processor.getCapture() });
+                         &own.ring, &processor.getCapture(),
+                         processor.apvts.getRawParameterValue (amvscope::params::offset)->load(),
+                         processor.apvts.getRawParameterValue (amvscope::params::invert)->load() >= 0.5f });
 
     if (processor.isSidechainActive())
         pending.push_back ({ { "sidechain", "Sidechain", sidechainColour, true, {} },
-                             &processor.getSidechainRing(), &processor.getSidechainCapture() });
+                             &processor.getSidechainRing(), &processor.getSidechainCapture(), 0.0f, false });
 
     // Keep the other sources alive while we read them.
     const auto others = showOthers ? processor.getOtherSources()
@@ -185,7 +208,8 @@ void AMVScopeAudioProcessorEditor::refresh()
                                 : otherColours[(size_t) s->id % std::size (otherColours)];
         pending.push_back ({ { "src" + juce::String (s->id), name.isNotEmpty() ? name : "AMVScope " + juce::String (s->id),
                                colour, following, {} },
-                             &s->ring, nullptr });
+                             &s->ring, nullptr, s->offsetMs.load (std::memory_order_relaxed),
+                             s->inverted.load (std::memory_order_relaxed) });
     }
 
     // Host mode: the window that holds the play position. Parts of it not
@@ -206,12 +230,16 @@ void AMVScopeAudioProcessorEditor::refresh()
 
         t.columns.resize ((size_t) columns);
 
+        // A trace shifted later by its offset shows, at each place, what it held that much earlier.
+        const double offsetWindows = (double) p.offsetMs / windowMilliseconds();
+        const double offsetQuarters = offsetWindows * window;
+
         for (int x = 0; x < columns; ++x)
         {
             if (following)
             {
-                double from = windowStart + window * x / columns;
-                double to = windowStart + window * (x + 1) / columns;
+                double from = windowStart + window * x / columns - offsetQuarters;
+                double to = windowStart + window * (x + 1) / columns - offsetQuarters;
 
                 if (to > head)
                 {
@@ -223,10 +251,26 @@ void AMVScopeAudioProcessorEditor::refresh()
             }
             else
             {
-                const auto first = (size_t) ((double) x / columns * amvscope::SyncedCapture::numBins);
-                const auto last = juce::jmax (first + 1, (size_t) ((double) (x + 1) / columns
-                                                                    * amvscope::SyncedCapture::numBins));
-                t.columns[(size_t) x] = p.capture->readRange (first, last);
+                const double bins = (double) amvscope::SyncedCapture::numBins;
+                const double firstPos = ((double) x / columns - offsetWindows) * bins;
+                const double lastPos = ((double) (x + 1) / columns - offsetWindows) * bins;
+
+                if (firstPos < 0.0 || lastPos > bins)
+                {
+                    t.columns[(size_t) x] = {};
+                    continue;
+                }
+
+                const auto first = (size_t) firstPos;
+                t.columns[(size_t) x] = p.capture->readRange (first, juce::jmax (first + 1, (size_t) lastPos));
+            }
+
+            if (p.inverted)
+            {
+                auto& c = t.columns[(size_t) x];
+                const float oldMin = c.min;
+                c.min = -c.max;
+                c.max = -oldMin;
             }
         }
 
@@ -234,13 +278,20 @@ void AMVScopeAudioProcessorEditor::refresh()
     }
 
     traces = std::move (next);
+
+    // The phase readout does not need 60 updates a second.
+    if (--phaseCountdown <= 0)
+    {
+        phaseCountdown = 6;
+        updatePhase();
+    }
 }
 
 void AMVScopeAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds().reduced (16, 0);
     headerArea = bounds.removeFromTop (48);
-    footerArea = bounds.removeFromBottom (44);
+    footerArea = bounds.removeFromBottom (80);
     scopeArea = bounds;
 
     auto row = headerArea.withTrimmedLeft (110).withSizeKeepingCentre (headerArea.getWidth() - 110, 26);
@@ -265,6 +316,18 @@ void AMVScopeAudioProcessorEditor::resized()
 
     processor.apvts.state.setProperty ("editorWidth", getWidth(), nullptr);
     processor.apvts.state.setProperty ("editorHeight", getHeight(), nullptr);
+
+    // Bottom row: phase tools.
+    auto phaseRow = footerArea.removeFromBottom (38).withTrimmedBottom (10).withTrimmedTop (2);
+    alignButton.setBounds (phaseRow.removeFromRight (64));
+    phaseRow.removeFromRight (10);
+    invertButton.setBounds (phaseRow.removeFromRight (76));
+    phaseRow.removeFromRight (8);
+    offsetSlider.setBounds (phaseRow.removeFromRight (230));
+    phaseRow.removeFromRight (6);
+    offsetLabel.setBounds (phaseRow.removeFromRight (44));
+    phaseRow.removeFromRight (14);
+    phaseArea = phaseRow;
 
     auto foot = footerArea.withSizeKeepingCentre (footerArea.getWidth(), 26);
     othersButton.setBounds (foot.removeFromRight (110));
@@ -326,6 +389,7 @@ void AMVScopeAudioProcessorEditor::paint (juce::Graphics& g)
     drawOverlays (g, inner);
     drawMeasure (g, inner);
     drawLegend (g);
+    drawPhase (g, phaseArea.toFloat());
 }
 
 void AMVScopeAudioProcessorEditor::drawGrid (juce::Graphics& g, juce::Rectangle<float> area) const
@@ -396,8 +460,8 @@ void AMVScopeAudioProcessorEditor::drawOverlays (juce::Graphics& g, juce::Rectan
     {
         const double window = processor.getWindowQuarters();
         const double head = processor.getOwnSource().ring.getHead();
-        const double phase = head / window - std::floor (head / window);
-        const float x = area.getX() + area.getWidth() * (float) phase;
+        const double position = head / window - std::floor (head / window);
+        const float x = area.getX() + area.getWidth() * (float) position;
         g.setColour (text.withAlpha (0.35f));
         g.drawVerticalLine (juce::roundToInt (x), area.getY(), area.getBottom());
     }
@@ -617,4 +681,125 @@ void AMVScopeAudioProcessorEditor::drawMeasure (juce::Graphics& g, juce::Rectang
                    + " dB",
                x, y - 26.0f);
     }
+}
+
+//==============================================================================
+// Phase
+
+void AMVScopeAudioProcessorEditor::updatePhase()
+{
+    PhaseInfo info;
+
+    const Trace* own = nullptr;
+    const Trace* partner = nullptr;
+
+    for (const auto& t : traces)
+    {
+        if (! t.available || hidden[t.key] || t.columns.empty())
+            continue;
+
+        if (t.key == "own")
+            own = &t;
+        else if (partner == nullptr)
+            partner = &t;
+    }
+
+    const auto columns = own != nullptr ? own->columns.size() : 0;
+    const double msPerColumn = columns > 0 ? windowMilliseconds() / (double) columns : 0.0;
+
+    // Longer windows squeeze a bass cycle into a pixel or two; the number would mean nothing.
+    if (own == nullptr || partner == nullptr || partner->columns.size() != columns || msPerColumn > 1.5)
+    {
+        phase = info;
+        return;
+    }
+
+    std::vector<float> a (columns), b (columns);
+    std::vector<bool> valid (columns);
+    int numValid = 0;
+
+    for (size_t i = 0; i < columns; ++i)
+    {
+        const auto& pc = partner->columns[i];
+        const auto& oc = own->columns[i];
+        valid[i] = pc.filled && oc.filled;
+        a[i] = 0.5f * (pc.min + pc.max);
+        b[i] = 0.5f * (oc.min + oc.max);
+        numValid += valid[i] ? 1 : 0;
+    }
+
+    if (numValid < (int) columns / 4)
+    {
+        phase = info;
+        return;
+    }
+
+    const float offsetNow = processor.apvts.getRawParameterValue (amvscope::params::offset)->load();
+
+    // A shifted track wraps around the window edge, where it meets the wrong
+    // beat of the other signal; leave that strip out of the comparison.
+    const auto edge = juce::jmin (columns / 4, (size_t) std::ceil (std::abs ((double) offsetNow) / msPerColumn));
+    for (size_t i = 0; i < edge; ++i)
+        valid[i] = valid[columns - 1 - i] = false;
+
+    const bool invertNow = processor.apvts.getRawParameterValue (amvscope::params::invert)->load() >= 0.5f;
+
+    info.valid = true;
+    info.partner = partner->label;
+    info.correlation = amvscope::correlation (a, b, valid);
+
+    // Search +-20 ms around where the track is now.
+    const auto best = amvscope::findBestShift (a, b, valid, juce::jmax (1, (int) (20.0 / msPerColumn)));
+    info.suggestedOffsetMs = juce::jlimit (-50.0f, 50.0f, offsetNow - (float) ((double) best.exactShift * msPerColumn));
+    info.suggestedInvert = best.inverted ? ! invertNow : invertNow;
+    info.suggestedCorrelation = std::abs (best.correlation);
+
+    phase = info;
+}
+
+void AMVScopeAudioProcessorEditor::alignToSuggestion()
+{
+    if (! phase.valid)
+        return;
+
+    setParam (amvscope::params::offset, phase.suggestedOffsetMs);
+    setParam (amvscope::params::invert, phase.suggestedInvert ? 1.0f : 0.0f);
+    frozenView = false;
+    phaseCountdown = 0;
+}
+
+void AMVScopeAudioProcessorEditor::drawPhase (juce::Graphics& g, juce::Rectangle<float> area) const
+{
+    g.setFont (juce::FontOptions (13.0f));
+
+    if (! phase.valid)
+    {
+        g.setColour (text.withAlpha (0.4f));
+        g.drawText ("Phase: needs a second signal and Length of 1/2 or shorter", area.toNearestInt(),
+                    juce::Justification::centredLeft);
+        return;
+    }
+
+    const float c = phase.correlation;
+    const auto colour = c > 0.3f ? midColour : (c < -0.3f ? lowColour : juce::Colour (0xffffd43b));
+
+    // Meter from -1 (left) to +1 (right), filled from the centre.
+    auto meter = area.removeFromLeft (120.0f).withSizeKeepingCentre (120.0f, 8.0f);
+    g.setColour (gridMajor);
+    g.fillRoundedRectangle (meter, 4.0f);
+    const float centre = meter.getCentreX();
+    const float end = centre + c * meter.getWidth() * 0.5f;
+    g.setColour (colour);
+    g.fillRoundedRectangle (juce::jmin (centre, end), meter.getY(), std::abs (end - centre), meter.getHeight(), 3.0f);
+    g.setColour (text.withAlpha (0.6f));
+    g.fillRect (centre - 0.5f, meter.getY() - 3.0f, 1.0f, meter.getHeight() + 6.0f);
+
+    area.removeFromLeft (10.0f);
+    juce::String s = "Phase vs " + phase.partner + ":  " + (c >= 0.0f ? "+" : "") + juce::String (c, 2);
+    s << "     Best: " << juce::String (phase.suggestedOffsetMs, 1) << " ms"
+      << (phase.suggestedInvert ? ", inverted" : "")
+      << "  (" << juce::String (phase.suggestedCorrelation, 2) << ")";
+
+    g.setColour (text.withAlpha (0.85f));
+    g.drawText (s, area.toNearestInt(), juce::Justification::centredLeft);
 }

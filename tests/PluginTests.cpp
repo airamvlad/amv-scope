@@ -287,6 +287,51 @@ void editorKeysAndSize()
     check (ed->getWidth() == 1280 && ed->getHeight() == 720, "window size restored");
 }
 
+void phaseSuggestionAlignsTracks()
+{
+    // A plays a kick; B plays the same kick 240 samples (5 ms) late.
+    // B's window must suggest Offset = -5 ms, and Align must bring them together.
+    TestPlayHead headA, headB;
+    AMVScopeAudioProcessor a, b;
+    a.setPlayHead (&headA);
+    b.setPlayHead (&headB);
+    prepare (a);
+    prepare (b);
+
+    auto kick = [] (int n)
+    {
+        if (n < 0) return 0.0f;
+        const double t = (double) (n % 24000) / sampleRate;
+        return (float) (0.9 * std::exp (-t * 14.0) * std::sin (6.283185307 * (50.0 + 150.0 * std::exp (-t * 40.0)) * t));
+    };
+
+    run (a, headA, 24000 * 3, kick);
+    run (b, headB, 24000 * 3, [&] (int n) { return kick (n - 240); });
+
+    std::unique_ptr<juce::AudioProcessorEditor> ed (b.createEditor());
+    auto* editor = dynamic_cast<AMVScopeAudioProcessorEditor*> (ed.get());
+    editor->refresh();
+
+    const auto before = editor->getPhaseInfo();
+    check (before.valid, "phase readout available with two tracks");
+    check (before.correlation < 0.9f, "delayed copy is not fully in phase");
+    check (std::abs (before.suggestedOffsetMs + 5.0f) < 0.8f, "suggests moving the late track 5 ms earlier");
+    check (! before.suggestedInvert, "no polarity flip suggested");
+
+    editor->alignToSuggestion();
+    run (b, headB, blockSize, [&] (int n) { return kick (n + 24000 * 3 - 240); });   // lets the offset reach the source
+    editor->refresh();
+    const auto after = editor->getPhaseInfo();
+    check (after.correlation > 0.97f, "aligned tracks are in phase");
+    check (std::abs (a.getOtherSources().front()->offsetMs.load() + 5.0f) < 0.8f, "offset is shared with other windows");
+
+    // Flipping the polarity turns the reading negative.
+    setParam (b, amvscope::params::invert, 1.0f);
+    for (int i = 0; i < 6; ++i) editor->refresh();
+    check (editor->getPhaseInfo().correlation < -0.97f, "inverted track reads negative");
+    check (editor->getPhaseInfo().suggestedInvert == false, "suggests removing the flip");
+}
+
 void instancesSeeEachOther()
 {
     TestPlayHead headA, headB;
@@ -390,6 +435,7 @@ int main()
     sidechainInTriggerMode();
     triggerFromSidechain();
     editorKeysAndSize();
+    phaseSuggestionAlignsTracks();
     instancesSeeEachOther();
     stateRoundTrip();
     layouts();

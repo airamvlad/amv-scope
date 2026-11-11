@@ -23,6 +23,8 @@ AMVScopeAudioProcessor::AMVScopeAudioProcessor()
     freezeParam = apvts.getRawParameterValue (amvscope::params::freeze);
     sendParam = apvts.getRawParameterValue (amvscope::params::send);
     triggerSourceParam = apvts.getRawParameterValue (amvscope::params::triggerSource);
+    offsetParam = apvts.getRawParameterValue (amvscope::params::offset);
+    invertParam = apvts.getRawParameterValue (amvscope::params::invert);
 
     ownSource = shared->add();
 }
@@ -80,6 +82,8 @@ void AMVScopeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         return;   // a block bigger than promised is skipped rather than allocating here
 
     ownSource->sending.store (sendParam->load() >= 0.5f, std::memory_order_relaxed);
+    ownSource->offsetMs.store (offsetParam->load(), std::memory_order_relaxed);
+    ownSource->inverted.store (invertParam->load() >= 0.5f, std::memory_order_relaxed);
 
     // Host tempo and position.
     bool playing = false;
