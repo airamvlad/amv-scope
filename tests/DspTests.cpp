@@ -1,7 +1,7 @@
 // Unit tests for the plain C++ DSP core.
 
-#include "dsp/History.h"
-#include "dsp/SampleFifo.h"
+#include "dsp/SyncedCapture.h"
+#include "dsp/TriggerDetector.h"
 
 #include <cstdio>
 #include <vector>
@@ -19,72 +19,114 @@ void check (bool condition, const char* what)
     }
 }
 
-void fifoKeepsOrder()
-{
-    amvscope::SampleFifo<int> fifo (8);
-    const int in[] = { 1, 2, 3, 4, 5 };
-    check (fifo.push (in, 5) == 5, "fifo accepts 5 items");
-    check (fifo.size() == 5, "fifo size is 5");
+using amvscope::SyncedCapture;
 
-    int out[8] {};
-    check (fifo.pop (out, 3) == 3, "fifo pops 3");
-    check (out[0] == 1 && out[1] == 2 && out[2] == 3, "fifo pops in order");
-    check (fifo.size() == 2, "fifo has 2 left");
+void captureStartsEmpty()
+{
+    SyncedCapture c;
+    bool anyFilled = false;
+    for (std::size_t i = 0; i < SyncedCapture::numBins; ++i)
+        anyFilled = anyFilled || c.readBin (i).filled;
+    check (! anyFilled, "capture starts empty");
 }
 
-void fifoDropsWhenFull()
+void capturePlacesSamplesByPosition()
 {
-    amvscope::SampleFifo<int> fifo (4);
-    const int in[] = { 1, 2, 3, 4, 5, 6 };
-    check (fifo.push (in, 6) == 4, "full fifo drops the extra items");
+    // One quarter note window, 2048 samples per quarter: one sample per bin.
+    SyncedCapture c;
+    std::vector<float> ramp (SyncedCapture::numBins);
+    for (std::size_t i = 0; i < ramp.size(); ++i)
+        ramp[i] = (float) i;
 
-    int out[8] {};
-    check (fifo.pop (out, 8) == 4, "fifo returns what it kept");
-    check (out[0] == 1 && out[3] == 4, "fifo kept the oldest items");
+    const double step = 1.0 / (double) SyncedCapture::numBins;
+    c.write (ramp.data(), ramp.size(), 0.0, step, 1.0);
+
+    check (c.readBin (0).max == 0.0f, "first sample in first bin");
+    check (c.readBin (1000).max == 1000.0f, "sample 1000 in bin 1000");
+    check (c.readBin (SyncedCapture::numBins - 1).filled, "last bin filled");
 }
 
-void fifoWrapsAround()
+void captureWrapsWindow()
 {
-    amvscope::SampleFifo<int> fifo (5);
-    int out[8] {};
-    int next = 0, expected = 0;
-    bool ok = true;
-
-    for (int round = 0; round < 100; ++round)
-    {
-        const int in[] = { next, next + 1, next + 2 };
-        next += (int) fifo.push (in, 3);
-        const auto n = fifo.pop (out, 2);
-
-        for (std::size_t i = 0; i < n; ++i)
-            ok = ok && out[i] == expected++;
-    }
-
-    check (ok, "fifo keeps order across wrap-around");
+    // Position 5.5 in a 1-quarter window lands in the middle bin.
+    SyncedCapture c;
+    const float one = 0.7f;
+    c.write (&one, 1, 5.5, 0.001, 1.0);
+    check (c.readBin (SyncedCapture::numBins / 2).max == 0.7f, "position 5.5 lands mid-window");
+    check (c.getPlayhead() > 0.49f && c.getPlayhead() < 0.51f, "playhead at middle");
 }
 
-void historyReturnsNewestFirst()
+void captureKeepsMinMax()
 {
-    amvscope::History history (4);
-    std::vector<amvscope::Frame> frames;
+    // Many samples into one bin: min and max are kept.
+    SyncedCapture c;
+    const float values[] { 0.1f, -0.4f, 0.9f, 0.2f };
+    c.write (values, 4, 0.0, 1e-9, 1.0);
+    const auto b = c.readBin (0);
+    check (b.min == -0.4f && b.max == 0.9f, "bin keeps min and max");
+}
 
-    for (int i = 0; i < 6; ++i)
-        frames.push_back ({ (float) i, -(float) i });
+void captureNewPassReplaces()
+{
+    SyncedCapture c;
+    const float loud = 0.9f, quiet = 0.1f;
+    c.write (&loud, 1, 0.0, 1e-9, 1.0);   // pass 0
+    c.write (&quiet, 1, 1.0, 1e-9, 1.0);  // pass 1, same bin
+    check (c.readBin (0).max == 0.1f, "next pass replaces the old value");
 
-    history.add (frames.data(), frames.size());
+    c.write (&loud, 1, 0.0, 1e-9, 1.0, 100);  // different passBase, same position
+    check (c.readBin (0).max == 0.9f, "pass base separates recordings");
+}
 
-    check (history.fromNewest (0).left == 5.0f, "newest frame is the last added");
-    check (history.fromNewest (3).left == 2.0f, "oldest kept frame");
-    check (history.fromNewest (0).right == -5.0f, "right channel kept");
+void triggerFiresOnRisingLevel()
+{
+    amvscope::TriggerDetector t;
+    t.setThreshold (0.5f);
+    t.setHoldoff (0);
+
+    std::vector<float> s (100, 0.0f);
+    s[40] = 0.8f;
+    check (t.process (s.data(), s.size()) == 40, "fires at the first loud sample");
+    check (t.process (s.data(), s.size()) == 40, "re-arms after the signal drops");
+}
+
+void triggerRespectsHoldoff()
+{
+    amvscope::TriggerDetector t;
+    t.setThreshold (0.5f);
+    t.setHoldoff (100);
+    t.reset();
+
+    std::vector<float> s (64, 0.0f);
+    s[10] = 0.9f;
+    s[50] = 0.9f;
+    // Hits at 10 and 50 of each 64-sample block: 10 fires, 50 (40 later) and the
+    // next block's 10 (64 later) are inside the holdoff, the next 50 (104 later) fires.
+    check (t.process (s.data(), s.size()) == 10, "first hit");
+    check (t.process (s.data(), s.size()) == 50, "hits inside holdoff ignored, next one fires");
+}
+
+void triggerNeedsSignalToDropFirst()
+{
+    amvscope::TriggerDetector t;
+    t.setThreshold (0.5f);
+    t.setHoldoff (0);
+
+    std::vector<float> loud (32, 0.9f);
+    check (t.process (loud.data(), loud.size()) == -1, "constant loud signal does not trigger");
 }
 } // namespace
 
 int main()
 {
-    fifoKeepsOrder();
-    fifoDropsWhenFull();
-    fifoWrapsAround();
-    historyReturnsNewestFirst();
+    captureStartsEmpty();
+    capturePlacesSamplesByPosition();
+    captureWrapsWindow();
+    captureKeepsMinMax();
+    captureNewPassReplaces();
+    triggerFiresOnRisingLevel();
+    triggerRespectsHoldoff();
+    triggerNeedsSignalToDropFirst();
 
     if (failures == 0)
         std::printf ("All DSP tests passed.\n");

@@ -22,11 +22,72 @@ void check (bool condition, const char* what)
 constexpr double sampleRate = 48000.0;
 constexpr int blockSize = 512;
 
+/** A host transport we can move by hand. */
+struct TestPlayHead final : juce::AudioPlayHead
+{
+    double ppq = 0.0;
+    double bpm = 120.0;
+    bool playing = true;
+
+    juce::Optional<PositionInfo> getPosition() const override
+    {
+        PositionInfo info;
+        info.setPpqPosition (ppq);
+        info.setBpm (bpm);
+        info.setIsPlaying (playing);
+        info.setTimeSignature (TimeSignature { 4, 4 });
+        return info;
+    }
+};
+
+void setParam (AMVScopeAudioProcessor& p, const char* id, float value)
+{
+    auto* param = p.apvts.getParameter (id);
+    param->setValueNotifyingHost (param->convertTo0to1 (value));
+}
+
+void prepare (AMVScopeAudioProcessor& p)
+{
+    p.setPlayConfigDetails (2, 2, sampleRate, blockSize);
+    p.prepareToPlay (sampleRate, blockSize);
+}
+
+/** Feeds blocks where every sample is produced by gen(n), moving the play head along. */
+template <typename Gen>
+void run (AMVScopeAudioProcessor& p, TestPlayHead& head, int totalSamples, Gen gen)
+{
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    const double quartersPerSample = head.bpm / 60.0 / sampleRate;
+
+    for (int start = 0; start < totalSamples; start += blockSize)
+    {
+        for (int i = 0; i < blockSize; ++i)
+        {
+            const float v = gen (start + i);
+            buffer.setSample (0, i, v);
+            buffer.setSample (1, i, v);
+        }
+
+        p.processBlock (buffer, midi);
+
+        if (head.playing)
+            head.ppq += quartersPerSample * blockSize;
+    }
+}
+
+int filledBins (const AMVScopeAudioProcessor& p)
+{
+    int n = 0;
+    for (std::size_t i = 0; i < amvscope::SyncedCapture::numBins; ++i)
+        n += p.getCapture().readBin (i).filled ? 1 : 0;
+    return n;
+}
+
 void audioPassesThroughUnchanged()
 {
     AMVScopeAudioProcessor p;
-    p.setPlayConfigDetails (2, 2, sampleRate, blockSize);
-    p.prepareToPlay (sampleRate, blockSize);
+    prepare (p);
 
     juce::AudioBuffer<float> buffer (2, blockSize);
     for (int i = 0; i < blockSize; ++i)
@@ -42,29 +103,105 @@ void audioPassesThroughUnchanged()
     bool same = true;
     for (int ch = 0; ch < 2; ++ch)
         for (int i = 0; i < blockSize; ++i)
-            same = same && buffer.getSample (ch, i) == original.getSample (ch, i);
+            same = same && juce::exactlyEqual (buffer.getSample (ch, i), original.getSample (ch, i));
 
     check (same, "audio is not changed");
+}
 
-    std::vector<amvscope::Frame> frames (blockSize);
-    check (p.getScopeFifo().pop (frames.data(), frames.size()) == (size_t) blockSize,
-           "scope receives every sample");
-    check (frames[100].left == original.getSample (0, 100)
-               && frames[100].right == original.getSample (1, 100),
-           "scope receives left and right");
+void hostSyncPlacesBeatsInPlace()
+{
+    // 1/4 window at 120 BPM = 24000 samples. A click on every beat must land in bin 0.
+    AMVScopeAudioProcessor p;
+    TestPlayHead head;
+    p.setPlayHead (&head);
+    prepare (p);
+    setParam (p, amvscope::params::length, 2.0f);   // 1/4
+
+    const int samplesPerBeat = 24000;
+    run (p, head, samplesPerBeat * 4, [&] (int n) { return n % samplesPerBeat < 10 ? 0.9f : 0.0f; });
+
+    check (p.isFollowingHost(), "follows the host while playing");
+    check (std::abs (p.getWindowQuarters() - 1.0) < 1e-9, "window is one quarter note");
+    check (p.getCapture().readBin (0).max > 0.8f, "beat click lands at the start of the window");
+    check (p.getCapture().readBin (1024).max < 0.01f, "middle of the beat is silent");
+    check (filledBins (p) == (int) amvscope::SyncedCapture::numBins, "whole window filled");
+}
+
+void barLengthFollowsTimeSignature()
+{
+    AMVScopeAudioProcessor p;
+    TestPlayHead head;
+    p.setPlayHead (&head);
+    prepare (p);
+    setParam (p, amvscope::params::length, 5.0f);   // 2 bars
+    run (p, head, blockSize, [] (int) { return 0.0f; });
+    check (std::abs (p.getWindowQuarters() - 8.0) < 1e-9, "2 bars of 4/4 = 8 quarters");
+}
+
+void triggerWhenStopped()
+{
+    // Transport stopped: nothing is drawn until the level crosses the trigger,
+    // then exactly one window is recorded starting at the hit.
+    AMVScopeAudioProcessor p;
+    TestPlayHead head;
+    head.playing = false;
+    p.setPlayHead (&head);
+    prepare (p);
+    setParam (p, amvscope::params::length, 0.0f);      // 1/16 = 6000 samples at 120 BPM
+    setParam (p, amvscope::params::threshold, -12.0f);
+
+    run (p, head, 4096, [] (int) { return 0.05f; });
+    check (! p.isFollowingHost(), "trigger mode while stopped");
+    check (filledBins (p) == 0, "nothing drawn below the trigger level");
+
+    const int hit = 4096 + 700;
+    run (p, head, 12288, [&] (int n) {
+        const int t = n + 4096 - hit;   // run() restarts n at 0
+        return t >= 0 && t < 6000 ? (t < 50 ? 0.9f : 0.2f) : 0.0f;
+    });
+
+    check (p.getCapture().readBin (0).max > 0.8f, "trigger hit is at the left edge");
+    check (filledBins (p) == (int) amvscope::SyncedCapture::numBins, "one full window recorded");
+    check (p.getCapture().readBin (1500).max > 0.15f, "rest of the window recorded");
+}
+
+void triggerModeWhilePlaying()
+{
+    AMVScopeAudioProcessor p;
+    TestPlayHead head;
+    p.setPlayHead (&head);
+    prepare (p);
+    setParam (p, amvscope::params::sync, 1.0f);   // Trigger
+    run (p, head, blockSize, [] (int) { return 0.0f; });
+    check (! p.isFollowingHost(), "Trigger sync ignores the transport");
+}
+
+void freezeStopsRecording()
+{
+    AMVScopeAudioProcessor p;
+    TestPlayHead head;
+    p.setPlayHead (&head);
+    prepare (p);
+    setParam (p, amvscope::params::freeze, 1.0f);
+    run (p, head, 48000, [] (int) { return 0.5f; });
+    check (filledBins (p) == 0, "frozen display does not change");
 }
 
 void stateRoundTrip()
 {
     AMVScopeAudioProcessor a;
-    a.state.setProperty ("testValue", 42, nullptr);
+    setParam (a, amvscope::params::length, 4.0f);
+    setParam (a, amvscope::params::zoom, 8.0f);
 
     juce::MemoryBlock data;
     a.getStateInformation (data);
 
     AMVScopeAudioProcessor b;
     b.setStateInformation (data.getData(), (int) data.getSize());
-    check ((int) b.state.getProperty ("testValue") == 42, "state is restored");
+    check (juce::roundToInt (b.apvts.getRawParameterValue (amvscope::params::length)->load()) == 4,
+           "length restored");
+    check (std::abs (b.apvts.getRawParameterValue (amvscope::params::zoom)->load() - 8.0f) < 0.01f,
+           "zoom restored");
 }
 
 void layouts()
@@ -89,6 +226,11 @@ int main()
     juce::ScopedJuceInitialiser_GUI juce;
 
     audioPassesThroughUnchanged();
+    hostSyncPlacesBeatsInPlace();
+    barLengthFollowsTimeSignature();
+    triggerWhenStopped();
+    triggerModeWhilePlaying();
+    freezeStopsRecording();
     stateRoundTrip();
     layouts();
 
