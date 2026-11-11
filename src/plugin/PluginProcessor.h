@@ -4,6 +4,7 @@
 
 #include "Parameters.h"
 #include "SharedSources.h"
+#include "Trace.h"
 #include "dsp/BandSplitter.h"
 #include "dsp/PpqRing.h"
 #include "dsp/SyncedCapture.h"
@@ -14,7 +15,8 @@
 #include <memory>
 #include <vector>
 
-class AMVScopeAudioProcessor final : public juce::AudioProcessor
+class AMVScopeAudioProcessor final : public juce::AudioProcessor,
+                                     private juce::Timer
 {
 public:
     AMVScopeAudioProcessor();
@@ -30,7 +32,7 @@ public:
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return JucePlugin_Name; }
-    bool acceptsMidi() const override { return false; }
+    bool acceptsMidi() const override { return true; }   // a note can start the picture
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
@@ -64,7 +66,7 @@ public:
     /** True while signal arrives on the sidechain input. */
     bool isSidechainActive() const noexcept { return sidechainActive.load (std::memory_order_relaxed); }
 
-    /** The other AMVScope instances in this process that send their signal. */
+    /** The other AMVScope instances (in this process or another) that send their signal. */
     std::vector<std::shared_ptr<amvscope::Source>> getOtherSources() const;
 
     /** True while the picture follows the host transport, false while it is triggered by level. */
@@ -78,8 +80,17 @@ public:
 
     double getBpm() const noexcept { return bpm.load (std::memory_order_relaxed); }
 
+    /** False: this instance cannot see instances in other processes (shared memory refused). */
+    bool seesOtherProcesses() const noexcept { return shared->isShared(); }
+
+    /** The remembered picture ("ghost") drawn behind the live one. Kept here so it
+        survives closing the plugin window; used by the UI thread only. */
+    std::vector<amvscope::Trace> ghostTraces;
+    double ghostWindowQuarters = 0.0;
+
 private:
-    void captureTriggered (int numSamples, bool withSidechain, double samplesPerQuarter, double window);
+    void timerCallback() override;
+    void captureTriggered (int numSamples, bool withSidechain, double samplesPerQuarter, double window, int midiHit);
 
     juce::SharedResourcePointer<amvscope::SharedSources> shared;
     std::shared_ptr<amvscope::Source> ownSource;
@@ -114,6 +125,7 @@ private:
     std::atomic<float>* triggerSourceParam = nullptr;
     std::atomic<float>* offsetParam = nullptr;
     std::atomic<float>* invertParam = nullptr;
+    std::atomic<float>* channelParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVScopeAudioProcessor)
 };

@@ -6,7 +6,7 @@ set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS architectures")
 # Windows: link the runtime statically so no Visual C++ redistributable is needed.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-project(AMVScope VERSION 0.5.0 LANGUAGES C CXX)
+project(AMVScope VERSION 0.8.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,7 +38,7 @@ if(AMVSCOPE_BUILD_PLUGIN)
         PLUGIN_CODE Amv1
         FORMATS VST3
         IS_SYNTH FALSE
-        NEEDS_MIDI_INPUT FALSE
+        NEEDS_MIDI_INPUT TRUE
         NEEDS_MIDI_OUTPUT FALSE
         IS_MIDI_EFFECT FALSE
         EDITOR_WANTS_KEYBOARD_FOCUS TRUE
@@ -47,7 +47,13 @@ if(AMVSCOPE_BUILD_PLUGIN)
 
     target_sources(AMVScope PRIVATE
         src/plugin/PluginProcessor.cpp
-        src/plugin/PluginEditor.cpp)
+        src/plugin/PluginEditor.cpp
+        src/plugin/SharedMemory.cpp)
+
+    # Shared memory (shm_open) lives in librt on older Linux systems.
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(AMVScope PRIVATE rt)
+    endif()
 
     target_compile_definitions(AMVScope PUBLIC
         JUCE_WEB_BROWSER=0

@@ -5,7 +5,7 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
 
 ![AMVScope](docs/screenshot.png)
 
-## Šta radi (verzija 0.5)
+## Šta radi (verzija 0.8)
 
 - **Prikaz sinhronizovan sa tempom:** dok Bitwig svira, talasni oblik se crta na mestu u taktu, pa slika stoji mirno dok se muzika ponavlja. Udarac kicka je uvek na istom mestu, a bas posle njega se vidi tačno u odnosu na kick.
 - **Length:** dužina prikaza 1/16, 1/8, 1/4, 1/2, 1 takt, 2 ili 4 takta (prati takt projekta, npr. 3/4). Za kick i bas je obično najbolje 1/4.
@@ -14,14 +14,14 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
 - **Zoom:** uvećanje po visini (1x do 32x), za tihe signale ili detalje repa kicka.
 - **Freeze:** zamrzava sliku da bi se mirno pogledala.
 - **Više signala jedan preko drugog:**
-  - **Druge AMVScope instance:** stavi AMVScope na traku sa kickom i na traku sa basom. U svakom prozoru se vidi i signal sa druge trake, sa imenom i bojom trake iz Bitwiga. *Send* određuje da li ostale instance vide ovu traku, a *Show others* da li ova prikazuje ostale. Radi dok se prati transport (Host).
+  - **Druge AMVScope instance:** stavi AMVScope na traku sa kickom i na traku sa basom. U svakom prozoru se vidi i signal sa druge trake, sa imenom i bojom trake iz Bitwiga. *Send* određuje da li ostale instance vide ovu traku, a *Show others* da li ova prikazuje ostale. Radi dok se prati transport (Host). Instance se vide u svakom režimu rada pluginova u Bitwigu, i kad svaki plugin radi u svom procesu (najviše 16 instanci odjednom).
   - **Sidechain:** signal doveden na sidechain ulaz plugina crta se narandžasto, i u Host i u Trigger režimu.
   - Klik na ime u legendi dole levo sakriva ili prikazuje taj signal.
 - **Colour:** *Track* (svaki signal u boji svoje trake) ili *Frequency* (ova traka obojena po sadržaju: crveno niske, zeleno srednje, plavo visoke frekvencije).
 - **Faza (donji red):** merač pokazuje koliko se ova traka slaže sa drugim signalom na ekranu (prvi vidljivi: sidechain ili druga instanca). `+1` znači da se talasi poklapaju i sabiraju, `0` da nemaju veze, `-1` da se poništavaju. Pored piše i predlog: za koliko ms treba pomeriti ovu traku (i da li okrenuti polaritet) da slaganje bude najbolje.
   - **Offset** pomera ovu traku na ekranu (u ms, plus znači kasnije), **Invert** joj okreće polaritet, a **Align** postavlja oba na predloženu vrednost. Pomak vide i ostale instance.
   - Ovo menja samo prikaz, ne i zvuk. Kad nađeš vrednost koja ti odgovara, isti pomak podesi u Bitwigu (kašnjenje trake ili *Time Shift* uređaj) i polaritet po potrebi.
-  - Merač radi kad je *Length* 1/2 ili kraće.
+  - Merač radi kad je *Length* 1/2 ili kraće. Faza se računa samo u delu gde oba signala sviraju u isto vreme (npr. rep kicka ispod početka basa); taj deo je obeležen tankom linijom na dnu prikaza, a njegova dužina piše pored merača. Ako takvog dela nema (bas počinje tek kad kick utihne), piše da se signali ne preklapaju i *Align* ne radi ništa, jer tada nema šta da se poravna.
 
 ![Phase](docs/screenshot-phase.png)
 
@@ -29,16 +29,24 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
 
 ![Bands](docs/screenshot-bands.png)
 
+- **Ghost (pre i posle):** dugme *Ghost* (ili taster `G`) zapamti sliku kakva je sada i ostavi je bledo iza živog signala. Promeni nešto (pomeri kick, podesi sidechain kompresiju ili EQ) i odmah vidiš razliku. Još jedan klik uklanja zapamćenu sliku. Slika se čuva dok je projekat otvoren i prikazuje se samo uz *Length* na kom je zapamćena.
+- **Visina signala:**
+  - **Auto level** (taster `A`) crta sve signale u istoj visini, pa se oblik tihog basa vidi jednako dobro kao glasan kick.
+  - **Točkić miša preko imena u legendi** podiže ili spušta samo taj signal (1 dB po koraku, do ±36 dB); dupli klik na ime vraća na normalu.
+  - Pored imena piše koliko je signal podignut ili spušten. Ovo menja samo prikaz. Dok je neki signal podignut ili spušten, merenje mišem pokazuje samo vreme, bez nivoa u dB.
+
+![Ghost](docs/screenshot-ghost.png)
+
+- **Channel (stereo):** bira koji deo stereo signala ove trake se prikazuje: *Mid (L+R)* je ono što ostaje u mono, *Left* i *Right* su pojedinačni kanali, a *Side (L-R)* je razlika između levog i desnog. Bas koji je stvarno mono na *Side* daje ravnu liniju. Izbor piše pored imena u legendi i vide ga i ostale instance.
 - **Merenje mišem:** pomeranjem miša preko prikaza vidiš vreme od početka prozora (ms) i nivo (dB). Prevuci mišem da izmeriš razmak između dve tačke, u ms i Hz (npr. dužinu repa kicka ili jednu periodu basa). Klik briše merenje.
 - **Zoom točkićem** miša preko prikaza; dupli klik vraća na 1x.
-- **Trig from:** u Trigger režimu sliku može da pokreće i sidechain (npr. kick pokreće prikaz basa).
+- **Trig from:** u Trigger režimu sliku može da pokreće i sidechain (npr. kick pokreće prikaz basa) ili *MIDI note*: svaka nota poslata pluginu pokreće sliku, bez obzira na nivo signala. U Bitwigu note do plugina na audio traci dovodiš uređajem *Note Receiver* ispred AMVScope-a.
+- **Slika prikaza:** taster `P` ili desni klik na prikaz pa *Save picture* snima prozor kao PNG u folder *Pictures/AMVScope* (*Slike/AMVScope*); putanja se kratko ispiše na dnu prikaza.
 - **Prozor** se može povećati povlačenjem donjeg desnog ugla; veličina i sakriveni signali se pamte u projektu.
-- **Tasteri** (klikni prvo na prikaz): `1`-`7` dužina, `F` ili razmak freeze, `S` sync, `C` boje, `B` prikaz po opsezima, `O` ostale instance, `+`/`-` ili strelice zoom, `Esc` briše merenje.
+- **Tasteri** (klikni prvo na prikaz): `1`-`7` dužina, `F` ili razmak freeze, `S` sync, `C` boje, `B` prikaz po opsezima, `G` ghost, `A` auto level, `P` snima sliku, `O` ostale instance, `+`/`-` ili strelice zoom, `Esc` briše merenje.
 - Plugin ne menja zvuk; podešavanja se pamte u projektu.
 
 ![Frequency](docs/screenshot-frequency.png)
-
-**Napomena za Bitwig:** instance se vide međusobno samo ako ih Bitwig pokreće u istom procesu. Ako se druge trake ne pojavljuju, u *Settings > Plug-ins* promeni *Plug-in hosting mode* tako da ne bude *Individually* (ili isto podesi za AMVScope pojedinačno).
 
 ## Plan
 
@@ -48,6 +56,9 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
 - [x] v0.3: promenljiva veličina prozora, tasteri, podešavanja koja se pamte u projektu
 - [x] v0.4: faza između traka (korelacija, pomak, polaritet, predlog poravnanja)
 - [x] v0.5: prikaz po opsezima (niske, srednje, visoke odvojeno)
+- [x] v0.6: poređenje pre i posle (ghost), visina po signalu i auto level
+- [x] v0.7: stereo (Mid, Left, Right, Side), okidanje MIDI notom, snimanje slike u PNG
+- [x] v0.8: instance se vide i kad svaka radi u svom procesu (deljena memorija)
 
 ## Preuzimanje i instalacija
 

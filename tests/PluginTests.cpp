@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 namespace
@@ -324,6 +325,7 @@ void phaseSuggestionAlignsTracks()
     check (before.correlation < 0.9f, "delayed copy is not fully in phase");
     check (std::abs (before.suggestedOffsetMs + 5.0f) < 0.8f, "suggests moving the late track 5 ms earlier");
     check (! before.suggestedInvert, "no polarity flip suggested");
+    check (before.related, "overlapping signals get a suggestion");
 
     editor->alignToSuggestion();
     run (b, headB, blockSize, [&] (int n) { return kick (n + 24000 * 3 - 240); });   // lets the offset reach the source
@@ -337,6 +339,200 @@ void phaseSuggestionAlignsTracks()
     for (int i = 0; i < 6; ++i) editor->refresh();
     check (editor->getPhaseInfo().correlation < -0.97f, "inverted track reads negative");
     check (editor->getPhaseInfo().suggestedInvert == false, "suggests removing the flip");
+}
+
+void noSuggestionWithoutOverlap()
+{
+    // A plays a kick in the first half of the beat, B a bass note in the second half.
+    // They never sound together, so there is nothing to align.
+    TestPlayHead headA, headB;
+    AMVScopeAudioProcessor a, b;
+    a.setPlayHead (&headA);
+    b.setPlayHead (&headB);
+    prepare (a);
+    prepare (b);
+
+    run (a, headA, 24000 * 3, [] (int n)
+    {
+        const int i = n % 24000;
+        const double t = (double) i / sampleRate;
+        return i < 10000 ? (float) (0.9 * std::exp (-t * 30.0) * std::sin (6.283185307 * 60.0 * t)) : 0.0f;
+    });
+    run (b, headB, 24000 * 3, [] (int n)
+    {
+        const int i = n % 24000;
+        return i >= 12000 ? (float) (0.5 * std::sin (6.283185307 * 87.0 * (double) i / sampleRate)) : 0.0f;
+    });
+
+    std::unique_ptr<juce::AudioProcessorEditor> ed (b.createEditor());
+    auto* editor = dynamic_cast<AMVScopeAudioProcessorEditor*> (ed.get());
+    editor->refresh();
+
+    const auto info = editor->getPhaseInfo();
+    check (info.valid, "phase readout still shown");
+    check (std::abs (info.correlation) < 0.2f, "signals that do not overlap read about zero");
+    check (! info.related, "no suggestion when the signals do not overlap");
+
+    editor->alignToSuggestion();
+    check (std::abs (b.apvts.getRawParameterValue (amvscope::params::offset)->load()) < 1e-6f, "Align leaves Offset alone");
+    check (b.apvts.getRawParameterValue (amvscope::params::invert)->load() < 0.5f, "Align leaves Invert alone");
+}
+
+void phaseReadInOverlapOnly()
+{
+    // A: a long kick tail. B: the same tone with flipped polarity, but only for an
+    // eighth of a second. Over the whole beat they barely relate; where both sound
+    // they cancel, and that is what the meter must show.
+    TestPlayHead headA, headB;
+    AMVScopeAudioProcessor a, b;
+    a.setPlayHead (&headA);
+    b.setPlayHead (&headB);
+    prepare (a);
+    prepare (b);
+
+    run (a, headA, 24000 * 3, [] (int n)
+    {
+        const double t = (double) (n % 24000) / sampleRate;
+        return (float) (0.9 * std::exp (-t * 6.0) * std::sin (6.283185307 * 60.0 * t));
+    });
+    run (b, headB, 24000 * 3, [] (int n)
+    {
+        const int i = n % 24000;
+        return i >= 6000 && i < 12000 ? (float) (-0.3 * std::sin (6.283185307 * 60.0 * (double) i / sampleRate)) : 0.0f;
+    });
+
+    std::unique_ptr<juce::AudioProcessorEditor> ed (b.createEditor());
+    auto* editor = dynamic_cast<AMVScopeAudioProcessorEditor*> (ed.get());
+    editor->refresh();
+
+    const auto info = editor->getPhaseInfo();
+    check (info.valid && info.related, "short overlap still gets a reading");
+    check (std::abs (info.overlapMs - 125.0f) < 25.0f, "overlap length is about 125 ms");
+    check (info.correlation < -0.97f, "cancelling tail reads close to -1");
+    check (std::abs (info.suggestedOffsetMs) < 1.0f, "no shift suggested for a pure polarity flip");
+    check (info.suggestedInvert, "suggests flipping the polarity");
+}
+
+void channelChoice()
+{
+    // Left carries 0.8, right 0.2: Mid 0.5, Left 0.8, Right 0.2, Side 0.3.
+    const float expected[] { 0.5f, 0.8f, 0.2f, 0.3f };
+
+    for (int channel = 0; channel < 4; ++channel)
+    {
+        TestPlayHead head;
+        AMVScopeAudioProcessor p;
+        p.setPlayHead (&head);
+        prepare (p);
+        setParam (p, amvscope::params::channel, (float) channel);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        juce::FloatVectorOperations::fill (buffer.getWritePointer (0), 0.8f, blockSize);
+        juce::FloatVectorOperations::fill (buffer.getWritePointer (1), 0.2f, blockSize);
+        p.processBlock (buffer, midi);
+
+        check (std::abs (p.getOwnSource().ring.read (0.0, 0.005).max - expected[channel]) < 1e-4f,
+               "Channel picks the right part of the stereo signal");
+        check (p.getOwnSource().channel.load() == channel, "channel is shared with other windows");
+    }
+}
+
+void midiNoteStartsPicture()
+{
+    // Stopped transport, quiet signal far below the trigger level: only a note can start the picture.
+    TestPlayHead head;
+    head.playing = false;
+    AMVScopeAudioProcessor p;
+    p.setPlayHead (&head);
+    prepare (p);
+    setParam (p, amvscope::params::triggerSource, (float) amvscope::params::TriggerSource::midi);
+    check (p.acceptsMidi(), "plugin takes MIDI");
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < blockSize; ++i)
+            buffer.setSample (ch, i, 0.01f * (float) (i + 1) / (float) blockSize);
+
+    p.processBlock (buffer, midi);
+    check (filledBins (p) == 0, "nothing drawn before a note arrives");
+
+    midi.addEvent (juce::MidiMessage::noteOn (1, 36, 0.8f), 100);
+    p.processBlock (buffer, midi);
+    check (midi.getNumEvents() == 1, "notes are passed on untouched");
+
+    // Sample 100 of the block (value 0.01 * 101 / 512) must sit at the left edge.
+    const auto first = p.getCapture().readBin (0);
+    check (first.filled && std::abs (first.min - 0.01f * 101.0f / 512.0f) < 1e-5f, "note-on is at the left edge");
+
+    setParam (p, amvscope::params::triggerSource, (float) amvscope::params::TriggerSource::main);
+    AMVScopeAudioProcessor q;
+    q.setPlayHead (&head);
+    prepare (q);
+    q.processBlock (buffer, midi);
+    check (filledBins (q) == 0, "a note does nothing with another trigger source");
+}
+
+void pictureIsSaved()
+{
+    AMVScopeAudioProcessor p;
+    prepare (p);
+    std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+    auto* editor = dynamic_cast<AMVScopeAudioProcessorEditor*> (ed.get());
+
+    const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("amvscope-test-" + juce::String (juce::Random::getSystemRandom().nextInt (1000000)));
+    const auto file = editor->savePicture (folder);
+    check (file.existsAsFile() && file.getSize() > 1000, "P saves a PNG");
+
+    const auto image = juce::ImageFileFormat::loadFrom (file);
+    check (image.getWidth() == ed->getWidth() * 2, "picture is saved at double resolution");
+    check (editor->savePicture (folder) != file, "a second picture gets its own file");
+    folder.deleteRecursively();
+}
+
+void ghostAndLevels()
+{
+    TestPlayHead head;
+    AMVScopeAudioProcessor p;
+    p.setPlayHead (&head);
+    prepare (p);
+    run (p, head, 48000, [] (int) { return 0.1f; });
+
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+        auto* editor = dynamic_cast<AMVScopeAudioProcessorEditor*> (ed.get());
+        editor->refresh();
+        check (std::abs (editor->getTraces().front().scale - 1.0f) < 1e-4f, "normal height by default");
+
+        // Auto level brings the peak of a quiet signal to 0.9 of the height.
+        setParam (p, amvscope::params::autoLevel, 1.0f);
+        editor->refresh();
+        check (std::abs (editor->getTraces().front().scale * 0.1f - 0.9f) < 0.01f, "Auto level fills the height");
+
+        setParam (p, amvscope::params::autoLevel, 0.0f);
+        editor->setTraceGain ("own", 6.0f);
+        check (std::abs (editor->getTraces().front().scale - 1.995f) < 0.01f, "+6 dB doubles the height");
+        editor->setTraceGain ("own", 100.0f);
+        check (std::abs (editor->getTraceGain ("own") - 36.0f) < 1e-4f, "gain is limited");
+        editor->setTraceGain ("own", 6.0f);
+
+        check (! editor->hasGhost(), "no ghost at first");
+        check (ed->keyPressed (juce::KeyPress ('g', {}, 'g')), "G handled");
+        check (editor->hasGhost(), "G remembers the picture");
+        check (p.ghostTraces.size() == 1 && p.ghostTraces[0].columns.size() == editor->getTraces()[0].columns.size(),
+               "ghost holds this track");
+    }
+
+    // A new window still has the ghost and the gain.
+    std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+    auto* editor = dynamic_cast<AMVScopeAudioProcessorEditor*> (ed.get());
+    check (editor->hasGhost(), "ghost survives closing the window");
+    check (std::abs (editor->getTraceGain ("own") - 6.0f) < 1e-4f, "gain survives closing the window");
+    editor->toggleGhost();
+    check (! editor->hasGhost() && p.ghostTraces.empty(), "second press removes the ghost");
 }
 
 void instancesSeeEachOther()
@@ -390,6 +586,70 @@ void instancesSeeEachOther()
     check (b.getOtherSources().empty(), "deleted instance disappears");
 }
 
+void sharedMemoryReachesOtherProcesses()
+{
+    // A second mapping of the shared block stands in for another process:
+    // it has its own view of the memory, like a plugin in a separate host process.
+    TestPlayHead head;
+    AMVScopeAudioProcessor a;
+    a.setPlayHead (&head);
+    prepare (a);
+    check (a.seesOtherProcesses(), "shared memory is available");
+
+    juce::AudioProcessor::TrackProperties props;
+    props.name = juce::String::fromUTF8 ("Ba\xc5\xa1 bas");
+    props.colourARGB = 0xff123456;
+    a.updateTrackProperties (props);
+    setParam (a, amvscope::params::offset, 3.0f);
+    run (a, head, blockSize * 4, [] (int) { return 0.3f; });
+
+    amvscope::SharedSources elsewhere;
+    auto mine = elsewhere.add();
+    auto others = elsewhere.listOthers (*mine);
+    check (others.size() == 1, "the other process sees this instance");
+
+    if (others.size() == 1)
+    {
+        auto& s = *others[0];
+        check (&s.slot != &a.getOwnSource().slot, "through its own view of the memory");
+        check (s.ring.hasData() && s.ring.read (0.0, 0.01).max > 0.25f, "and reads its signal");
+        check (s.getTrackName() == *props.name, "track name crosses over");
+        check (s.getTrackColour() == juce::Colour (0xff123456), "track colour crosses over");
+        check (std::abs (s.offsetMs.load() - 3.0f) < 1e-4f, "offset crosses over");
+    }
+
+    // And the other way round.
+    const float value = 0.6f;
+    mine->ring.write (&value, nullptr, 1, 2.0, 1.0e-4);
+    auto seen = a.getOtherSources();
+    check (seen.size() == 1 && seen[0]->ring.read (2.0, 2.001).max > 0.5f, "this instance sees the other process");
+
+    // A process that died stops its heartbeat and drops out of the list.
+    mine->slot.heartbeatMs.store (juce::Time::currentTimeMillis() - amvscope::heartbeatTimeoutMs - 1000);
+    check (a.getOtherSources().empty(), "a dead instance disappears");
+
+    mine->beat();
+    elsewhere.remove (mine);
+    check (a.getOtherSources().empty(), "a removed instance disappears");
+}
+
+void slotsRunOut()
+{
+    // More instances than slots: the extra ones still work, alone.
+    std::vector<std::unique_ptr<AMVScopeAudioProcessor>> many;
+    for (std::size_t i = 0; i < amvscope::SharedBlock::numSlots + 2; ++i)
+        many.push_back (std::make_unique<AMVScopeAudioProcessor>());
+
+    TestPlayHead head;
+    auto& last = *many.back();
+    last.setPlayHead (&head);
+    prepare (last);
+    run (last, head, blockSize, [] (int) { return 0.3f; });
+    check (last.getOwnSource().id == 0, "instance beyond the last slot gets a private one");
+    check (last.getOwnSource().ring.read (0.0, 0.01).max > 0.25f, "and still records");
+    check (many.front()->getOtherSources().empty(), "others do not see silent or private instances");
+}
+
 void stateRoundTrip()
 {
     AMVScopeAudioProcessor a;
@@ -432,6 +692,9 @@ int main()
 {
     juce::ScopedJuceInitialiser_GUI juce;
 
+    // A block of our own, so the tests never meet a DAW that is running AMVScope.
+    amvscope::sharedBlockName() = "amvscope.test." + std::to_string (juce::Random::getSystemRandom().nextInt (1000000));
+
     audioPassesThroughUnchanged();
     hostSyncPlacesBeatsInPlace();
     barLengthFollowsTimeSignature();
@@ -443,9 +706,19 @@ int main()
     triggerFromSidechain();
     editorKeysAndSize();
     phaseSuggestionAlignsTracks();
+    noSuggestionWithoutOverlap();
+    phaseReadInOverlapOnly();
+    channelChoice();
+    midiNoteStartsPicture();
+    pictureIsSaved();
+    ghostAndLevels();
     instancesSeeEachOther();
+    sharedMemoryReachesOtherProcesses();
+    slotsRunOut();
     stateRoundTrip();
     layouts();
+
+    amvscope::SharedMemory::forget (amvscope::sharedBlockName());
 
     if (failures == 0)
         std::printf ("All plugin tests passed.\n");
