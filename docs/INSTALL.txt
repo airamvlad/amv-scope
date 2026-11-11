@@ -1,0 +1,27 @@
+AMVScope - instalacija
+==========================
+
+WINDOWS (instaler)
+1. Zatvori Bitwig.
+2. Pokreni "AMVScope-x.y.z-Windows-Setup.exe".
+   Windows moze da prikaze plavi prozor "Windows protected your PC", jer
+   instaler nije potpisan. Klikni "More info", pa "Run anyway".
+3. Otvori Bitwig. Plugin se zove "AMVScope".
+
+MAC (instaler)
+1. Zatvori Bitwig.
+2. Desni klik na "AMVScope-x.y.z-macOS.pkg", pa "Open".
+   Ako macOS ne dozvoli: System Settings > Privacy & Security, pa dole
+   klikni "Open Anyway". To je zato sto instaler nije potpisan Apple
+   sertifikatom.
+3. Otvori Bitwig. Plugin se zove "AMVScope".
+
+RUCNA INSTALACIJA (ako instaler ne radi)
+Windows: raspakuj "...-Windows-manual.zip" i kopiraj folder
+   "AMVScope.vst3" u  C:\Program Files\Common Files\VST3
+Mac: raspakuj "...-macOS-manual.zip", kopiraj "AMVScope.vst3" u
+   ~/Library/Audio/Plug-Ins/VST3  i jednom pokreni u Terminalu:
+   xattr -cr ~/Library/Audio/Plug-Ins/VST3/"AMVScope.vst3"
+
+Ako se plugin ne pojavi: Bitwig > Settings > Locations > Plug-in Locations,
+proveri da je VST3 folder na listi i klikni Rescan.
