@@ -3,18 +3,22 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "Parameters.h"
+#include "SharedSources.h"
+#include "dsp/BandSplitter.h"
+#include "dsp/PpqRing.h"
 #include "dsp/SyncedCapture.h"
 #include "dsp/TriggerDetector.h"
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 class AMVScopeAudioProcessor final : public juce::AudioProcessor
 {
 public:
     AMVScopeAudioProcessor();
-    ~AMVScopeAudioProcessor() override = default;
+    ~AMVScopeAudioProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -40,10 +44,28 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    void updateTrackProperties (const TrackProperties&) override;
+
     juce::AudioProcessorValueTreeState apvts;
 
-    /** What the display draws. Safe to read from the UI thread. */
+    //==========================================================================
+    // What the display draws. All safe to read from the UI thread.
+
+    /** Main input, recorded by host position (also what other instances see). */
+    const amvscope::Source& getOwnSource() const noexcept { return *ownSource; }
+
+    /** Sidechain input, recorded by host position. */
+    const amvscope::PpqRing& getSidechainRing() const noexcept { return sidechainRing; }
+
+    /** Trigger mode recordings (one window starting at the trigger). */
     const amvscope::SyncedCapture& getCapture() const noexcept { return capture; }
+    const amvscope::SyncedCapture& getSidechainCapture() const noexcept { return sidechainCapture; }
+
+    /** True while signal arrives on the sidechain input. */
+    bool isSidechainActive() const noexcept { return sidechainActive.load (std::memory_order_relaxed); }
+
+    /** The other AMVScope instances in this process that send their signal. */
+    std::vector<std::shared_ptr<amvscope::Source>> getOtherSources() const;
 
     /** True while the picture follows the host transport, false while it is triggered by level. */
     bool isFollowingHost() const noexcept { return followingHost.load (std::memory_order_relaxed); }
@@ -57,13 +79,21 @@ public:
     double getBpm() const noexcept { return bpm.load (std::memory_order_relaxed); }
 
 private:
-    void captureTriggered (const float* mono, int numSamples, double samplesPerQuarter, double window);
+    void captureTriggered (int numSamples, bool withSidechain, double samplesPerQuarter, double window);
 
-    amvscope::SyncedCapture capture;
+    juce::SharedResourcePointer<amvscope::SharedSources> shared;
+    std::shared_ptr<amvscope::Source> ownSource;
+
+    amvscope::PpqRing sidechainRing;
+    amvscope::SyncedCapture capture, sidechainCapture;
     amvscope::TriggerDetector trigger;
-    std::vector<float> mono;
+    amvscope::BandSplitter mainSplitter, sidechainSplitter;
+
+    std::vector<float> mono, sidechainMono;
+    std::vector<amvscope::Bands> bands, sidechainBands;
 
     double sampleRate = 48000.0;
+    int sidechainSilentSamples = 0;
 
     // Trigger mode: where the current recording is, in quarter notes since the trigger.
     double triggerPosition = 0.0;
@@ -71,6 +101,7 @@ private:
     std::int64_t triggerCount = 0;
 
     std::atomic<bool> followingHost { false };
+    std::atomic<bool> sidechainActive { false };
     std::atomic<double> windowQuarters { 1.0 };
     std::atomic<double> quartersPerBar { 4.0 };
     std::atomic<double> bpm { 120.0 };
@@ -79,6 +110,7 @@ private:
     std::atomic<float>* syncParam = nullptr;
     std::atomic<float>* thresholdParam = nullptr;
     std::atomic<float>* freezeParam = nullptr;
+    std::atomic<float>* sendParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVScopeAudioProcessor)
 };

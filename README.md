@@ -5,7 +5,7 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
 
 ![AMVScope](docs/screenshot.png)
 
-## Šta radi (verzija 0.1)
+## Šta radi (verzija 0.2)
 
 - **Prikaz sinhronizovan sa tempom:** dok Bitwig svira, talasni oblik se crta na mestu u taktu, pa slika stoji mirno dok se muzika ponavlja. Udarac kicka je uvek na istom mestu, a bas posle njega se vidi tačno u odnosu na kick.
 - **Length:** dužina prikaza 1/16, 1/8, 1/4, 1/2, 1 takt, 2 ili 4 takta (prati takt projekta, npr. 3/4). Za kick i bas je obično najbolje 1/4.
@@ -13,13 +13,22 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
 - **Trigger:** nivo (u dB) na kom počinje crtanje kad se ne prati transport; narandžaste isprekidane linije ga prikazuju na ekranu.
 - **Zoom:** uvećanje po visini (1x do 32x), za tihe signale ili detalje repa kicka.
 - **Freeze:** zamrzava sliku da bi se mirno pogledala.
+- **Više signala jedan preko drugog:**
+  - **Druge AMVScope instance:** stavi AMVScope na traku sa kickom i na traku sa basom. U svakom prozoru se vidi i signal sa druge trake, sa imenom i bojom trake iz Bitwiga. *Send* određuje da li ostale instance vide ovu traku, a *Show others* da li ova prikazuje ostale. Radi dok se prati transport (Host).
+  - **Sidechain:** signal doveden na sidechain ulaz plugina crta se narandžasto, i u Host i u Trigger režimu.
+  - Klik na ime u legendi dole levo sakriva ili prikazuje taj signal.
+- **Colour:** *Track* (svaki signal u boji svoje trake) ili *Frequency* (ova traka obojena po sadržaju: crveno niske, zeleno srednje, plavo visoke frekvencije).
 - Plugin ne menja zvuk; podešavanja se pamte u projektu.
+
+![Frequency](docs/screenshot-frequency.png)
+
+**Napomena za Bitwig:** instance se vide međusobno samo ako ih Bitwig pokreće u istom procesu. Ako se druge trake ne pojavljuju, u *Settings > Plug-ins* promeni *Plug-in hosting mode* tako da ne bude *Individually* (ili isto podesi za AMVScope pojedinačno).
 
 ## Plan
 
 - [x] Kostur: CMake/JUCE projekat, build na GitHub-u, instaleri
 - [x] v0.1: talasni oblik sinhronizovan sa tempom (1/16 do 4 takta), zoom po amplitudi, freeze, trigger po nivou kad transport ne svira
-- [ ] v0.2: više signala (sidechain ulaz ili deljenje između instanci), prikaz jedan preko drugog u bojama, bojenje po frekvenciji
+- [x] v0.2: više signala (sidechain ulaz ili deljenje između instanci), prikaz jedan preko drugog u bojama, bojenje po frekvenciji
 - [ ] v0.3: promenljiva veličina prozora, tasteri, podešavanja koja se pamte u projektu
 
 ## Preuzimanje i instalacija
@@ -41,8 +50,8 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-- `src/dsp/`: jezgro u čistom C++-u, bez JUCE-a (`SyncedCapture` raspoređuje uzorke po poziciji u taktu, `TriggerDetector` okidanje po nivou), testira se bez DAW-a (`tests/DspTests.cpp`).
-- `src/plugin/`: JUCE plugin (procesor i prozor).
+- `src/dsp/`: jezgro u čistom C++-u, bez JUCE-a (`PpqRing` pamti signal po poziciji u taktu, `SyncedCapture` jedan prozor u trigger režimu, `TriggerDetector` okidanje po nivou, `BandSplitter` nivoi niskih/srednjih/visokih), testira se bez DAW-a (`tests/DspTests.cpp`).
+- `src/plugin/`: JUCE plugin (procesor, prozor i `SharedSources`, preko kog se instance vide).
 - `tests/PluginTests.cpp`: pokreće pravi procesor bez DAW-a.
 
 Plugin koristi [JUCE](https://juce.com) (besplatan za ličnu upotrebu; za prodaju proveriti uslove licence).

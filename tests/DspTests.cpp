@@ -1,9 +1,13 @@
 // Unit tests for the plain C++ DSP core.
 
+#include "dsp/BandSplitter.h"
+#include "dsp/PpqRing.h"
 #include "dsp/SyncedCapture.h"
 #include "dsp/TriggerDetector.h"
 
+#include <cmath>
 #include <cstdio>
+#include <algorithm>
 #include <vector>
 
 namespace
@@ -115,6 +119,77 @@ void triggerNeedsSignalToDropFirst()
     std::vector<float> loud (32, 0.9f);
     check (t.process (loud.data(), loud.size()) == -1, "constant loud signal does not trigger");
 }
+void ringReadsByPosition()
+{
+    amvscope::PpqRing ring;
+    check (! ring.hasData(), "ring starts empty");
+
+    // Quarter notes 0..2 at 1/1000 quarter per sample: value = position.
+    std::vector<float> v (2000);
+    for (std::size_t i = 0; i < v.size(); ++i)
+        v[i] = (float) i / 1000.0f;
+    ring.write (v.data(), nullptr, v.size(), 0.0, 0.001);
+
+    check (ring.hasData(), "ring has data");
+    check (std::abs (ring.getHead() - 1.999) < 1e-9, "head is the last position");
+    check (std::abs (ring.read (1.5, 1.5005).max - 1.5f) < 0.002f, "reads the right position (fine)");
+    check (std::abs (ring.read (1.0, 1.5).max - 1.5f) < 0.002f, "long range uses coarse bins");
+    check (! ring.read (5.0, 5.001).filled, "unwritten position is empty");
+}
+
+void ringRejectsOtherLaps()
+{
+    amvscope::PpqRing ring;
+    const float x = 0.5f;
+    ring.write (&x, nullptr, 1, 3.0, 0.001);
+
+    // 3.0 and 35.0 share a bin (ring is 32 quarters) but are different laps.
+    check (ring.read (3.0, 3.0004).filled, "same lap readable");
+    check (! ring.read (35.0, 35.0004).filled, "next lap not confused with this one");
+    check (! ring.read (-29.0, -28.9996).filled, "previous lap not confused with this one");
+
+    const float y = -0.25f;
+    ring.write (&y, nullptr, 1, -1.0, 0.001);   // pre-roll positions work too
+    check (ring.read (-1.0, -0.9996).min == -0.25f, "negative position readable");
+}
+
+void storeFiltersByPass()
+{
+    amvscope::BinStore store (4);
+    store.add (1, 7, 0.4f, { 0.1f, 0.2f, 0.3f });
+    check (store.read (1).filled, "any pass accepted by default");
+    check (store.read (1, 7).filled, "matching pass accepted");
+    check (! store.read (1, 8).filled, "other pass rejected");
+    check (store.read (1).bands.high == 0.3f, "bands stored");
+}
+
+void bandsFollowFrequency()
+{
+    auto measure = [] (double freq)
+    {
+        amvscope::BandSplitter split;
+        split.prepare (48000.0);
+        amvscope::Bands peak;
+        for (int n = 0; n < 48000; ++n)
+        {
+            const auto b = split.process ((float) std::sin (2.0 * 3.141592653589793 * freq * n / 48000.0));
+            if (n > 24000)
+            {
+                peak.low = std::max (peak.low, b.low);
+                peak.mid = std::max (peak.mid, b.mid);
+                peak.high = std::max (peak.high, b.high);
+            }
+        }
+        return peak;
+    };
+
+    const auto bass = measure (50.0);
+    const auto voice = measure (800.0);
+    const auto hat = measure (10000.0);
+    check (bass.low > 0.9f && bass.low > 10.0f * bass.high && bass.low > 5.0f * bass.mid, "50 Hz is low");
+    check (voice.mid > voice.low && voice.mid > voice.high, "800 Hz is mostly mid");
+    check (hat.high > 0.9f && hat.low < 0.01f, "10 kHz is high");
+}
 } // namespace
 
 int main()
@@ -127,6 +202,10 @@ int main()
     triggerFiresOnRisingLevel();
     triggerRespectsHoldoff();
     triggerNeedsSignalToDropFirst();
+    ringReadsByPosition();
+    ringRejectsOtherLaps();
+    storeFiltersByPass();
+    bandsFollowFrequency();
 
     if (failures == 0)
         std::printf ("All DSP tests passed.\n");
