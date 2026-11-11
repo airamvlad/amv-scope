@@ -5,7 +5,7 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
 
 ![AMVScope](docs/screenshot.png)
 
-## Šta radi (verzija 0.5)
+## Šta radi (verzija 0.6)
 
 - **Prikaz sinhronizovan sa tempom:** dok Bitwig svira, talasni oblik se crta na mestu u taktu, pa slika stoji mirno dok se muzika ponavlja. Udarac kicka je uvek na istom mestu, a bas posle njega se vidi tačno u odnosu na kick.
 - **Length:** dužina prikaza 1/16, 1/8, 1/4, 1/2, 1 takt, 2 ili 4 takta (prati takt projekta, npr. 3/4). Za kick i bas je obično najbolje 1/4.
@@ -29,11 +29,19 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
 
 ![Bands](docs/screenshot-bands.png)
 
+- **Ghost (pre i posle):** dugme *Ghost* (ili taster `G`) zapamti sliku kakva je sada i ostavi je bledo iza živog signala. Promeni nešto (pomeri kick, podesi sidechain kompresiju ili EQ) i odmah vidiš razliku. Još jedan klik uklanja zapamćenu sliku. Slika se čuva dok je projekat otvoren i prikazuje se samo uz *Length* na kom je zapamćena.
+- **Visina signala:**
+  - **Auto level** (taster `A`) crta sve signale u istoj visini, pa se oblik tihog basa vidi jednako dobro kao glasan kick.
+  - **Točkić miša preko imena u legendi** podiže ili spušta samo taj signal (1 dB po koraku, do ±36 dB); dupli klik na ime vraća na normalu.
+  - Pored imena piše koliko je signal podignut ili spušten. Ovo menja samo prikaz. Dok je neki signal podignut ili spušten, merenje mišem pokazuje samo vreme, bez nivoa u dB.
+
+![Ghost](docs/screenshot-ghost.png)
+
 - **Merenje mišem:** pomeranjem miša preko prikaza vidiš vreme od početka prozora (ms) i nivo (dB). Prevuci mišem da izmeriš razmak između dve tačke, u ms i Hz (npr. dužinu repa kicka ili jednu periodu basa). Klik briše merenje.
 - **Zoom točkićem** miša preko prikaza; dupli klik vraća na 1x.
 - **Trig from:** u Trigger režimu sliku može da pokreće i sidechain (npr. kick pokreće prikaz basa).
 - **Prozor** se može povećati povlačenjem donjeg desnog ugla; veličina i sakriveni signali se pamte u projektu.
-- **Tasteri** (klikni prvo na prikaz): `1`-`7` dužina, `F` ili razmak freeze, `S` sync, `C` boje, `B` prikaz po opsezima, `O` ostale instance, `+`/`-` ili strelice zoom, `Esc` briše merenje.
+- **Tasteri** (klikni prvo na prikaz): `1`-`7` dužina, `F` ili razmak freeze, `S` sync, `C` boje, `B` prikaz po opsezima, `G` ghost, `A` auto level, `O` ostale instance, `+`/`-` ili strelice zoom, `Esc` briše merenje.
 - Plugin ne menja zvuk; podešavanja se pamte u projektu.
 
 ![Frequency](docs/screenshot-frequency.png)
@@ -48,6 +56,7 @@ Glavna namena je provera kicka i basa: kako se talasni oblici poklapaju u vremen
 - [x] v0.3: promenljiva veličina prozora, tasteri, podešavanja koja se pamte u projektu
 - [x] v0.4: faza između traka (korelacija, pomak, polaritet, predlog poravnanja)
 - [x] v0.5: prikaz po opsezima (niske, srednje, visoke odvojeno)
+- [x] v0.6: poređenje pre i posle (ghost), visina po signalu i auto level
 
 ## Preuzimanje i instalacija
 

@@ -4,6 +4,7 @@
 
 #include "Parameters.h"
 #include "SharedSources.h"
+#include "Trace.h"
 #include "dsp/BandSplitter.h"
 #include "dsp/PpqRing.h"
 #include "dsp/SyncedCapture.h"
@@ -77,6 +78,11 @@ public:
     double getQuartersPerBar() const noexcept { return quartersPerBar.load (std::memory_order_relaxed); }
 
     double getBpm() const noexcept { return bpm.load (std::memory_order_relaxed); }
+
+    /** The remembered picture ("ghost") drawn behind the live one. Kept here so it
+        survives closing the plugin window; used by the UI thread only. */
+    std::vector<amvscope::Trace> ghostTraces;
+    double ghostWindowQuarters = 0.0;
 
 private:
     void captureTriggered (int numSamples, bool withSidechain, double samplesPerQuarter, double window);

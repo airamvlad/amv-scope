@@ -339,6 +339,48 @@ void phaseSuggestionAlignsTracks()
     check (editor->getPhaseInfo().suggestedInvert == false, "suggests removing the flip");
 }
 
+void ghostAndLevels()
+{
+    TestPlayHead head;
+    AMVScopeAudioProcessor p;
+    p.setPlayHead (&head);
+    prepare (p);
+    run (p, head, 48000, [] (int) { return 0.1f; });
+
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+        auto* editor = dynamic_cast<AMVScopeAudioProcessorEditor*> (ed.get());
+        editor->refresh();
+        check (std::abs (editor->getTraces().front().scale - 1.0f) < 1e-4f, "normal height by default");
+
+        // Auto level brings the peak of a quiet signal to 0.9 of the height.
+        setParam (p, amvscope::params::autoLevel, 1.0f);
+        editor->refresh();
+        check (std::abs (editor->getTraces().front().scale * 0.1f - 0.9f) < 0.01f, "Auto level fills the height");
+
+        setParam (p, amvscope::params::autoLevel, 0.0f);
+        editor->setTraceGain ("own", 6.0f);
+        check (std::abs (editor->getTraces().front().scale - 1.995f) < 0.01f, "+6 dB doubles the height");
+        editor->setTraceGain ("own", 100.0f);
+        check (std::abs (editor->getTraceGain ("own") - 36.0f) < 1e-4f, "gain is limited");
+        editor->setTraceGain ("own", 6.0f);
+
+        check (! editor->hasGhost(), "no ghost at first");
+        check (ed->keyPressed (juce::KeyPress ('g', {}, 'g')), "G handled");
+        check (editor->hasGhost(), "G remembers the picture");
+        check (p.ghostTraces.size() == 1 && p.ghostTraces[0].columns.size() == editor->getTraces()[0].columns.size(),
+               "ghost holds this track");
+    }
+
+    // A new window still has the ghost and the gain.
+    std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+    auto* editor = dynamic_cast<AMVScopeAudioProcessorEditor*> (ed.get());
+    check (editor->hasGhost(), "ghost survives closing the window");
+    check (std::abs (editor->getTraceGain ("own") - 6.0f) < 1e-4f, "gain survives closing the window");
+    editor->toggleGhost();
+    check (! editor->hasGhost() && p.ghostTraces.empty(), "second press removes the ghost");
+}
+
 void instancesSeeEachOther()
 {
     TestPlayHead headA, headB;
@@ -443,6 +485,7 @@ int main()
     triggerFromSidechain();
     editorKeysAndSize();
     phaseSuggestionAlignsTracks();
+    ghostAndLevels();
     instancesSeeEachOther();
     stateRoundTrip();
     layouts();

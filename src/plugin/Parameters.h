@@ -16,6 +16,7 @@ inline constexpr auto triggerSource = "triggerSource";
 inline constexpr auto offset = "offset";
 inline constexpr auto invert = "invert";
 inline constexpr auto view = "view";
+inline constexpr auto autoLevel = "autoLevel";
 
 /** Display window lengths, in the order of the Length menu. */
 inline const juce::StringArray lengthNames { "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars" };
@@ -88,6 +89,9 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 
     // v0.5
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { view, 5 }, "View", viewNames, 0));
+
+    // v0.6: draw every signal at the same height, to compare shapes of loud and quiet tracks.
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { autoLevel, 6 }, "Auto level", false));
 
     return layout;
 }

@@ -27,15 +27,7 @@ public:
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed (const juce::KeyPress&) override;
 
-    /** One signal on screen: this track, the sidechain, or another instance. */
-    struct Trace
-    {
-        juce::String key;     // stable id, used to remember hidden traces
-        juce::String label;
-        juce::Colour colour;
-        bool available = true;   // false: listed but cannot be drawn in this mode
-        std::vector<amvscope::BinData> columns;
-    };
+    using Trace = amvscope::Trace;
 
     /** How this track lines up with another signal on screen. */
     struct PhaseInfo
@@ -57,6 +49,14 @@ public:
     void refresh();
     const std::vector<Trace>& getTraces() const noexcept { return traces; }
 
+    /** Remembers the picture as it is now and keeps it behind the live one; again to remove it. */
+    void toggleGhost();
+    bool hasGhost() const noexcept { return ! processor.ghostTraces.empty(); }
+
+    /** Display gain of one trace in dB ("own", "sidechain", "src<id>"). Only changes the picture. */
+    void setTraceGain (const juce::String& key, float db);
+    float getTraceGain (const juce::String& key) const;
+
 private:
     void timerCallback() override;
     void drawGrid (juce::Graphics&, juce::Rectangle<float> area) const;
@@ -75,6 +75,9 @@ private:
     void setParam (const char* id, float value);
     void toggleParam (const char* id);
     void saveHidden();
+    void saveGains();
+    bool ghostFitsWindow() const;
+    const juce::String* legendKeyAt (juce::Point<int>) const;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ComboAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
@@ -87,17 +90,21 @@ private:
     juce::ComboBox lengthBox, syncBox, colourBox, sourceBox, viewBox;
     juce::Slider zoomSlider, thresholdSlider, offsetSlider;
     juce::TextButton freezeButton { "Freeze" };
-    juce::ToggleButton sendButton { "Send" }, othersButton { "Show others" }, invertButton { "Invert" };
-    juce::TextButton alignButton { "Align" };
+    juce::ToggleButton sendButton { "Send" }, othersButton { "Show others" }, invertButton { "Invert" },
+                       autoLevelButton { "Auto level" };
+    juce::TextButton alignButton { "Align" }, ghostButton { "Ghost" };
 
     std::unique_ptr<ComboAttachment> lengthAttachment, syncAttachment, colourAttachment, sourceAttachment, viewAttachment;
     std::unique_ptr<SliderAttachment> zoomAttachment, thresholdAttachment, offsetAttachment;
-    std::unique_ptr<ButtonAttachment> freezeAttachment, sendAttachment, othersAttachment, invertAttachment;
+    std::unique_ptr<ButtonAttachment> freezeAttachment, sendAttachment, othersAttachment, invertAttachment,
+                                      autoLevelAttachment;
 
     juce::Rectangle<int> headerArea, footerArea, scopeArea, legendArea, phaseArea;
 
     std::vector<Trace> traces;
     std::map<juce::String, bool> hidden;
+    std::map<juce::String, float> gains;       // dB, set with the mouse wheel on a name in the legend
+    std::map<juce::String, float> heldPeaks;   // smoothed peak per trace, for Auto level
     std::vector<std::pair<juce::Rectangle<int>, juce::String>> legendHits;
     bool frozenView = false;
 
