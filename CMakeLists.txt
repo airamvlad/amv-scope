@@ -31,6 +31,8 @@ if(AMVSCOPE_BUILD_PLUGIN)
     juce_add_plugin(AMVScope
         PRODUCT_NAME "AMVScope"
         COMPANY_NAME "AMV"
+        COMPANY_WEBSITE "https://github.com/airamvlad/amv-scope"
+        COMPANY_COPYRIGHT "AGPL-3.0"
         BUNDLE_ID "com.amv.amvscope"
         PLUGIN_MANUFACTURER_CODE Amvs
         PLUGIN_CODE Amv1

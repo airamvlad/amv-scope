@@ -11,6 +11,15 @@ AppName=AMVScope
 AppVersion={#AppVersion}
 AppVerName=AMVScope {#AppVersion}
 AppPublisher=AMVScope
+AppPublisherURL=https://github.com/airamvlad/amv-scope
+LicenseFile=..\LICENSE
+; File properties of the installer itself (shown by Windows, checked when signing).
+VersionInfoVersion={#AppVersion}
+VersionInfoProductName=AMVScope
+VersionInfoProductVersion={#AppVersion}
+VersionInfoDescription=AMVScope Setup
+VersionInfoCompany=AMVScope
+VersionInfoCopyright=AGPL-3.0
 DefaultDirName={commoncf64}\VST3\AMVScope.vst3
 DisableDirPage=yes
 DisableProgramGroupPage=yes
