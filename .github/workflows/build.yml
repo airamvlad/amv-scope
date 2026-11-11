@@ -1,0 +1,130 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^project(AMVScope VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          & $iscc "/DAppVersion=$env:APP_VERSION" installer\windows.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Manual install fallback: the plain plugin folder as a zip.
+          Compress-Archive -Path "build/AMVScope_artefacts/Release/VST3/AMVScope.vst3" `
+                           -DestinationPath "dist/AMVScope-$env:APP_VERSION-Windows-manual.zip"
+          Copy-Item docs/INSTALL.txt dist/
+          Get-ChildItem dist
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          plugin="build/AMVScope_artefacts/Release/VST3/AMVScope.vst3"
+          mkdir -p dist pkgroot/Library/Audio/Plug-Ins/VST3
+          cp -R "$plugin" pkgroot/Library/Audio/Plug-Ins/VST3/
+          codesign --force --deep --sign - "pkgroot/Library/Audio/Plug-Ins/VST3/AMVScope.vst3"
+          lipo -archs "pkgroot/Library/Audio/Plug-Ins/VST3/AMVScope.vst3/Contents/MacOS/AMVScope"
+
+          # Always install to the system VST3 folder, even if a copy exists elsewhere.
+          pkgbuild --analyze --root pkgroot component.plist
+          /usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" component.plist || true
+          pkgbuild --root pkgroot --component-plist component.plist \
+                   --identifier com.amv.amvscope.pkg --version "$APP_VERSION" \
+                   --install-location / "dist/AMVScope-$APP_VERSION-macOS.pkg"
+
+          # Manual install fallback.
+          ditto -c -k --keepParent "pkgroot/Library/Audio/Plug-Ins/VST3/AMVScope.vst3" \
+                "dist/AMVScope-$APP_VERSION-macOS-manual.zip"
+          cp docs/INSTALL.txt dist/
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AMVScope-${{ matrix.name }}
+          path: dist/
+          if-no-files-found: error
+
+  # Publishes the installers on the Releases page. Runs for every push to main and
+  # creates the release for the version in CMakeLists.txt if it does not exist yet,
+  # so raising the version number (to 0.1.0 or later) is all it takes to ship a new release.
+  release:
+    name: Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^project(AMVScope VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          tag="v$version"
+
+          # 0.0.x builds are work in progress and are not published.
+          case "$version" in 0.0.*) echo "Version $version is not published."; exit 0;; esac
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $tag already exists, nothing to do."
+            exit 0
+          fi
+
+          mkdir files
+          cp artifacts/AMVScope-Windows/*.exe artifacts/AMVScope-Windows/*.zip files/
+          cp artifacts/AMVScope-macOS/*.pkg artifacts/AMVScope-macOS/*.zip files/
+          cp artifacts/AMVScope-macOS/INSTALL.txt files/
+          gh release create "$tag" files/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "AMVScope $tag" --generate-notes
