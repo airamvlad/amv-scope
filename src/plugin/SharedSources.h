@@ -29,6 +29,11 @@ struct Source
     PpqRing ring;
     std::atomic<bool> sending { true };
 
+    // Display-only shift (ms, positive = later) and polarity flip of this track,
+    // so every window shows it the same way.
+    std::atomic<float> offsetMs { 0.0f };
+    std::atomic<bool> inverted { false };
+
     void setTrack (const juce::String& name, juce::Colour colour)
     {
         const juce::SpinLock::ScopedLockType lock (trackLock);
