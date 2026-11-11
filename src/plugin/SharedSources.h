@@ -33,6 +33,7 @@ struct Source
     // so every window shows it the same way.
     std::atomic<float> offsetMs { 0.0f };
     std::atomic<bool> inverted { false };
+    std::atomic<int> channel { 0 };   // params::Channel: which part of the stereo signal this is
 
     void setTrack (const juce::String& name, juce::Colour colour)
     {

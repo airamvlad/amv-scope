@@ -31,7 +31,7 @@ public:
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return JucePlugin_Name; }
-    bool acceptsMidi() const override { return false; }
+    bool acceptsMidi() const override { return true; }   // a note can start the picture
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
@@ -85,7 +85,7 @@ public:
     double ghostWindowQuarters = 0.0;
 
 private:
-    void captureTriggered (int numSamples, bool withSidechain, double samplesPerQuarter, double window);
+    void captureTriggered (int numSamples, bool withSidechain, double samplesPerQuarter, double window, int midiHit);
 
     juce::SharedResourcePointer<amvscope::SharedSources> shared;
     std::shared_ptr<amvscope::Source> ownSource;
@@ -120,6 +120,7 @@ private:
     std::atomic<float>* triggerSourceParam = nullptr;
     std::atomic<float>* offsetParam = nullptr;
     std::atomic<float>* invertParam = nullptr;
+    std::atomic<float>* channelParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVScopeAudioProcessor)
 };

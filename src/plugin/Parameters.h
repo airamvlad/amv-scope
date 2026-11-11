@@ -17,6 +17,7 @@ inline constexpr auto offset = "offset";
 inline constexpr auto invert = "invert";
 inline constexpr auto view = "view";
 inline constexpr auto autoLevel = "autoLevel";
+inline constexpr auto channel = "channel";
 
 /** Display window lengths, in the order of the Length menu. */
 inline const juce::StringArray lengthNames { "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars" };
@@ -43,8 +44,13 @@ inline const juce::StringArray syncNames { "Host", "Trigger" };
 enum class View { waveform = 0, bands = 1 };
 inline const juce::StringArray viewNames { "Wave", "Bands" };
 
-enum class TriggerSource { main = 0, sidechain = 1 };
-inline const juce::StringArray triggerSourceNames { "This track", "Sidechain" };
+enum class TriggerSource { main = 0, sidechain = 1, midi = 2 };
+inline const juce::StringArray triggerSourceNames { "This track", "Sidechain", "MIDI note" };
+
+/** Which part of a stereo track is shown. Side is what is left when both speakers are summed to mono and lost. */
+enum class Channel { mid = 0, left = 1, right = 2, side = 3 };
+inline const juce::StringArray channelNames { "Mid (L+R)", "Left", "Right", "Side (L-R)" };
+inline const juce::StringArray channelShortNames { "", "L", "R", "Side" };
 
 enum class ColourMode { track = 0, frequency = 1 };
 inline const juce::StringArray colourModeNames { "Track", "Frequency" };
@@ -92,6 +98,9 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 
     // v0.6: draw every signal at the same height, to compare shapes of loud and quiet tracks.
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { autoLevel, 6 }, "Auto level", false));
+
+    // v0.7
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { channel, 7 }, "Channel", channelNames, 0));
 
     return layout;
 }

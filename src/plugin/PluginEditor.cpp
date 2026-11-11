@@ -81,6 +81,10 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     setupLabel (sourceLabel, "Trig from");
     setupLabel (offsetLabel, "Offset");
     setupLabel (viewLabel, "View");
+    setupLabel (channelLabel, "Channel");
+    channelBox.addItemList (amvscope::params::channelNames, 1);
+    channelBox.setTooltip ("Which part of this stereo track is shown. Mid is what stays in mono; "
+                           "Side is the difference between left and right. A bass that is truly mono shows a flat line on Side.");
     viewBox.addItemList (amvscope::params::viewNames, 1);
     viewBox.setTooltip ("Wave: the waveform. Bands: the level of lows (below 200 Hz), mids and highs "
                         "(above 2.5 kHz) in three rows, so you can see where each signal has its energy.");
@@ -119,7 +123,7 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     for (auto* c : std::initializer_list<juce::Component*> {
              &lengthLabel, &syncLabel, &zoomLabel, &thresholdLabel, &colourLabel, &sourceLabel, &lengthBox,
              &syncBox, &colourBox, &sourceBox, &offsetLabel, &offsetSlider, &invertButton, &alignButton, &viewLabel, &viewBox, &zoomSlider, &thresholdSlider, &freezeButton, &sendButton, &othersButton,
-             &ghostButton, &autoLevelButton })
+             &ghostButton, &autoLevelButton, &channelLabel, &channelBox })
         addAndMakeVisible (c);
 
     auto& apvts = processor.apvts;
@@ -129,6 +133,7 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     colourAttachment = std::make_unique<ComboAttachment> (apvts, ids::colourMode, colourBox);
     sourceAttachment = std::make_unique<ComboAttachment> (apvts, ids::triggerSource, sourceBox);
     viewAttachment = std::make_unique<ComboAttachment> (apvts, ids::view, viewBox);
+    channelAttachment = std::make_unique<ComboAttachment> (apvts, ids::channel, channelBox);
     zoomAttachment = std::make_unique<SliderAttachment> (apvts, ids::zoom, zoomSlider);
     thresholdAttachment = std::make_unique<SliderAttachment> (apvts, ids::threshold, thresholdSlider);
     freezeAttachment = std::make_unique<ButtonAttachment> (apvts, ids::freeze, freezeButton);
@@ -142,7 +147,7 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     for (auto* c : std::initializer_list<juce::Component*> { &lengthBox, &syncBox, &colourBox, &sourceBox,
                                                               &freezeButton, &sendButton, &othersButton,
                                                               &invertButton, &alignButton, &viewBox,
-                                                              &ghostButton, &autoLevelButton })
+                                                              &ghostButton, &autoLevelButton, &channelBox })
         c->setWantsKeyboardFocus (false);
 
     for (const auto& key : juce::StringArray::fromTokens (apvts.state.getProperty ("hidden").toString(), ",", ""))
@@ -157,10 +162,10 @@ AMVScopeAudioProcessorEditor::AMVScopeAudioProcessorEditor (AMVScopeAudioProcess
     setOpaque (true);
     setWantsKeyboardFocus (true);
     // Read the saved size first: setting the limits already resizes the window.
-    const int savedWidth = juce::jlimit (1080, 3840, (int) apvts.state.getProperty ("editorWidth", 1120));
+    const int savedWidth = juce::jlimit (1200, 3840, (int) apvts.state.getProperty ("editorWidth", 1240));
     const int savedHeight = juce::jlimit (460, 2160, (int) apvts.state.getProperty ("editorHeight", 620));
     setResizable (true, true);
-    setResizeLimits (1080, 460, 3840, 2160);
+    setResizeLimits (1200, 460, 3840, 2160);
     setSize (savedWidth, savedHeight);
     refresh();
     startTimerHz (60);
@@ -174,6 +179,10 @@ AMVScopeAudioProcessorEditor::~AMVScopeAudioProcessorEditor()
 void AMVScopeAudioProcessorEditor::timerCallback()
 {
     refresh();
+
+    if (toastCountdown > 0 && --toastCountdown == 0)
+        toast.clear();
+
     repaint (scopeArea.getUnion (legendArea).getUnion (phaseArea));
 }
 
@@ -205,8 +214,16 @@ void AMVScopeAudioProcessorEditor::refresh()
     std::vector<Pending> pending;
 
     const auto& own = processor.getOwnSource();
+    // "Bass (Side)": say which part of the stereo signal a trace shows, unless it is the usual Mid.
+    const auto withChannel = [] (const juce::String& name, int channel)
+    {
+        const auto shortName = amvscope::params::channelShortNames[channel];
+        return shortName.isEmpty() ? name : name + " (" + shortName + ")";
+    };
+
     const auto ownName = own.getTrackName();
-    pending.push_back ({ { "own", ownName.isNotEmpty() ? ownName : "This track",
+    pending.push_back ({ { "own", withChannel (ownName.isNotEmpty() ? ownName : "This track",
+                                               juce::roundToInt (processor.apvts.getRawParameterValue (amvscope::params::channel)->load())),
                            hasColour (own.getTrackColour()) ? own.getTrackColour() : ownColour, true, {} },
                          &own.ring, &processor.getCapture(),
                          processor.apvts.getRawParameterValue (amvscope::params::offset)->load(),
@@ -226,7 +243,9 @@ void AMVScopeAudioProcessorEditor::refresh()
         const auto colour = hasColour (s->getTrackColour())
                                 ? s->getTrackColour()
                                 : otherColours[(size_t) s->id % std::size (otherColours)];
-        pending.push_back ({ { "src" + juce::String (s->id), name.isNotEmpty() ? name : "AMVScope " + juce::String (s->id),
+        pending.push_back ({ { "src" + juce::String (s->id),
+                               withChannel (name.isNotEmpty() ? name : "AMVScope " + juce::String (s->id),
+                                            s->channel.load (std::memory_order_relaxed)),
                                colour, following, {} },
                              &s->ring, nullptr, s->offsetMs.load (std::memory_order_relaxed),
                              s->inverted.load (std::memory_order_relaxed) });
@@ -392,6 +411,10 @@ void AMVScopeAudioProcessorEditor::resized()
     sourceBox.setBounds (foot.removeFromRight (106));
     foot.removeFromRight (6);
     sourceLabel.setBounds (foot.removeFromRight (58));
+    foot.removeFromRight (14);
+    channelBox.setBounds (foot.removeFromRight (104));
+    foot.removeFromRight (6);
+    channelLabel.setBounds (foot.removeFromRight (52));
     foot.removeFromRight (10);
     autoLevelButton.setBounds (foot.removeFromRight (98));
     foot.removeFromRight (10);
@@ -569,6 +592,17 @@ void AMVScopeAudioProcessorEditor::drawOverlays (juce::Graphics& g, juce::Rectan
     g.setColour (text.withAlpha (following ? 0.6f : 0.9f));
     g.setFont (juce::FontOptions (12.0f));
     g.drawText (status, area.reduced (8.0f, 2.0f).toNearestInt(), juce::Justification::topRight);
+
+    if (toast.isNotEmpty())
+    {
+        const int width = juce::GlyphArrangement::getStringWidthInt (juce::Font (juce::FontOptions (12.0f)), toast) + 20;
+        const auto box = juce::Rectangle<float> ((float) width, 24.0f)
+                             .withCentre ({ area.getCentreX(), area.getBottom() - 24.0f });
+        g.setColour (background.withAlpha (0.9f));
+        g.fillRoundedRectangle (box, 5.0f);
+        g.setColour (text);
+        g.drawText (toast, box.toNearestInt(), juce::Justification::centred);
+    }
 }
 
 void AMVScopeAudioProcessorEditor::drawLegend (juce::Graphics& g)
@@ -639,6 +673,27 @@ void AMVScopeAudioProcessorEditor::saveHidden()
             keys.add (key);
 
     processor.apvts.state.setProperty ("hidden", keys.joinIntoString (","), nullptr);
+}
+
+juce::File AMVScopeAudioProcessorEditor::savePicture (const juce::File& folder)
+{
+    toast.clear();   // keep an older message out of the picture
+    const auto image = createComponentSnapshot (getLocalBounds(), true, 2.0f);
+    const auto file = folder.getNonexistentChildFile (
+        "AMVScope " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H.%M.%S"), ".png", false);
+
+    bool saved = false;
+
+    if (folder.createDirectory().wasOk())
+    {
+        juce::FileOutputStream stream (file);
+        saved = stream.openedOk() && juce::PNGImageFormat().writeImageToStream (image, stream);
+    }
+
+    toast = saved ? "Saved: " + file.getFullPathName() : "Could not save the picture to " + folder.getFullPathName();
+    toastCountdown = 60 * 4;
+    repaint();
+    return saved ? file : juce::File();
 }
 
 void AMVScopeAudioProcessorEditor::saveGains()
@@ -726,6 +781,26 @@ void AMVScopeAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 
     const auto plot = getPlotArea();
 
+    if (plot.contains (e.position) && e.mods.isPopupMenu())
+    {
+        juce::PopupMenu menu;
+        menu.addItem (1, "Save picture (P)");
+        menu.addItem (2, hasGhost() ? "Remove ghost (G)" : "Remember as ghost (G)");
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition(),
+                            [safe = juce::Component::SafePointer<AMVScopeAudioProcessorEditor> (this)] (int choice)
+                            {
+                                if (safe == nullptr)
+                                    return;
+
+                                if (choice == 1)
+                                    safe->savePicture (juce::File::getSpecialLocation (juce::File::userPicturesDirectory)
+                                                           .getChildFile ("AMVScope"));
+                                else if (choice == 2)
+                                    safe->toggleGhost();
+                            });
+        return;
+    }
+
     if (plot.contains (e.position))
     {
         // Start a new time measurement; a plain click clears the old one.
@@ -792,6 +867,8 @@ bool AMVScopeAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
     else if (c == 'b')                                toggleParam (ids::view);
     else if (c == 'a')                                toggleParam (ids::autoLevel);
     else if (c == 'g')                                toggleGhost();
+    else if (c == 'p')                                savePicture (juce::File::getSpecialLocation (juce::File::userPicturesDirectory)
+                                                                       .getChildFile ("AMVScope"));
     else if (c == '+' || c == '=' || key == juce::KeyPress::upKey)   setParam (ids::zoom, juce::jmin (32.0f, zoom * 1.5f));
     else if (c == '-' || key == juce::KeyPress::downKey)             setParam (ids::zoom, juce::jmax (1.0f, zoom / 1.5f));
     else if (key == juce::KeyPress::escapeKey)        measuring = false;

@@ -412,6 +412,86 @@ void phaseReadInOverlapOnly()
     check (info.suggestedInvert, "suggests flipping the polarity");
 }
 
+void channelChoice()
+{
+    // Left carries 0.8, right 0.2: Mid 0.5, Left 0.8, Right 0.2, Side 0.3.
+    const float expected[] { 0.5f, 0.8f, 0.2f, 0.3f };
+
+    for (int channel = 0; channel < 4; ++channel)
+    {
+        TestPlayHead head;
+        AMVScopeAudioProcessor p;
+        p.setPlayHead (&head);
+        prepare (p);
+        setParam (p, amvscope::params::channel, (float) channel);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        juce::FloatVectorOperations::fill (buffer.getWritePointer (0), 0.8f, blockSize);
+        juce::FloatVectorOperations::fill (buffer.getWritePointer (1), 0.2f, blockSize);
+        p.processBlock (buffer, midi);
+
+        check (std::abs (p.getOwnSource().ring.read (0.0, 0.005).max - expected[channel]) < 1e-4f,
+               "Channel picks the right part of the stereo signal");
+        check (p.getOwnSource().channel.load() == channel, "channel is shared with other windows");
+    }
+}
+
+void midiNoteStartsPicture()
+{
+    // Stopped transport, quiet signal far below the trigger level: only a note can start the picture.
+    TestPlayHead head;
+    head.playing = false;
+    AMVScopeAudioProcessor p;
+    p.setPlayHead (&head);
+    prepare (p);
+    setParam (p, amvscope::params::triggerSource, (float) amvscope::params::TriggerSource::midi);
+    check (p.acceptsMidi(), "plugin takes MIDI");
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < blockSize; ++i)
+            buffer.setSample (ch, i, 0.01f * (float) (i + 1) / (float) blockSize);
+
+    p.processBlock (buffer, midi);
+    check (filledBins (p) == 0, "nothing drawn before a note arrives");
+
+    midi.addEvent (juce::MidiMessage::noteOn (1, 36, 0.8f), 100);
+    p.processBlock (buffer, midi);
+    check (midi.getNumEvents() == 1, "notes are passed on untouched");
+
+    // Sample 100 of the block (value 0.01 * 101 / 512) must sit at the left edge.
+    const auto first = p.getCapture().readBin (0);
+    check (first.filled && std::abs (first.min - 0.01f * 101.0f / 512.0f) < 1e-5f, "note-on is at the left edge");
+
+    setParam (p, amvscope::params::triggerSource, (float) amvscope::params::TriggerSource::main);
+    AMVScopeAudioProcessor q;
+    q.setPlayHead (&head);
+    prepare (q);
+    q.processBlock (buffer, midi);
+    check (filledBins (q) == 0, "a note does nothing with another trigger source");
+}
+
+void pictureIsSaved()
+{
+    AMVScopeAudioProcessor p;
+    prepare (p);
+    std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+    auto* editor = dynamic_cast<AMVScopeAudioProcessorEditor*> (ed.get());
+
+    const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("amvscope-test-" + juce::String (juce::Random::getSystemRandom().nextInt (1000000)));
+    const auto file = editor->savePicture (folder);
+    check (file.existsAsFile() && file.getSize() > 1000, "P saves a PNG");
+
+    const auto image = juce::ImageFileFormat::loadFrom (file);
+    check (image.getWidth() == ed->getWidth() * 2, "picture is saved at double resolution");
+    check (editor->savePicture (folder) != file, "a second picture gets its own file");
+    folder.deleteRecursively();
+}
+
 void ghostAndLevels()
 {
     TestPlayHead head;
@@ -560,6 +640,9 @@ int main()
     phaseSuggestionAlignsTracks();
     noSuggestionWithoutOverlap();
     phaseReadInOverlapOnly();
+    channelChoice();
+    midiNoteStartsPicture();
+    pictureIsSaved();
     ghostAndLevels();
     instancesSeeEachOther();
     stateRoundTrip();

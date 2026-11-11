@@ -25,6 +25,7 @@ AMVScopeAudioProcessor::AMVScopeAudioProcessor()
     triggerSourceParam = apvts.getRawParameterValue (amvscope::params::triggerSource);
     offsetParam = apvts.getRawParameterValue (amvscope::params::offset);
     invertParam = apvts.getRawParameterValue (amvscope::params::invert);
+    channelParam = apvts.getRawParameterValue (amvscope::params::channel);
 
     ownSource = shared->add();
 }
@@ -69,7 +70,7 @@ bool AMVScopeAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts)
     return true;
 }
 
-void AMVScopeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void AMVScopeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
 
@@ -84,6 +85,9 @@ void AMVScopeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     ownSource->sending.store (sendParam->load() >= 0.5f, std::memory_order_relaxed);
     ownSource->offsetMs.store (offsetParam->load(), std::memory_order_relaxed);
     ownSource->inverted.store (invertParam->load() >= 0.5f, std::memory_order_relaxed);
+
+    const int channel = juce::roundToInt (channelParam->load());
+    ownSource->channel.store (channel, std::memory_order_relaxed);
 
     // Host tempo and position.
     bool playing = false;
@@ -119,13 +123,22 @@ void AMVScopeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     if (freezeParam->load() >= 0.5f)
         return;
 
-    // Main input: mono sum and band levels.
+    // Main input: the chosen part of the stereo signal, and its band levels.
     const float* left = mainIn.getReadPointer (0);
     const float* right = mainIn.getReadPointer (numChannels > 1 ? 1 : 0);
+    float gainLeft = 0.5f, gainRight = 0.5f;   // Mid
+
+    switch ((amvscope::params::Channel) channel)
+    {
+        case amvscope::params::Channel::left:  gainLeft = 1.0f; gainRight = 0.0f; break;
+        case amvscope::params::Channel::right: gainLeft = 0.0f; gainRight = 1.0f; break;
+        case amvscope::params::Channel::side:  gainLeft = 0.5f; gainRight = -0.5f; break;
+        case amvscope::params::Channel::mid:   break;
+    }
 
     for (int i = 0; i < numSamples; ++i)
     {
-        const float m = 0.5f * (left[i] + right[i]);
+        const float m = gainLeft * left[i] + gainRight * right[i];
         mono[(size_t) i] = m;
         bands[(size_t) i] = mainSplitter.process (m);
     }
@@ -172,11 +185,25 @@ void AMVScopeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     if (useHost)
         triggerRecording = false;
     else
-        captureTriggered (numSamples, withSidechain, samplesPerQuarter, window);
+    {
+        // First note-on in this block, for the MIDI trigger source.
+        int midiHit = -1;
+
+        for (const auto metadata : midi)
+        {
+            if (metadata.getMessage().isNoteOn())
+            {
+                midiHit = juce::jlimit (0, numSamples - 1, metadata.samplePosition);
+                break;
+            }
+        }
+
+        captureTriggered (numSamples, withSidechain, samplesPerQuarter, window, midiHit);
+    }
 }
 
 void AMVScopeAudioProcessor::captureTriggered (int numSamples, bool withSidechain,
-                                               double samplesPerQuarter, double window)
+                                               double samplesPerQuarter, double window, int midiHit)
 {
     const double step = 1.0 / samplesPerQuarter;
 
@@ -211,9 +238,13 @@ void AMVScopeAudioProcessor::captureTriggered (int numSamples, bool withSidechai
 
     // The detector sees the whole block so its holdoff and re-arming stay in step.
     // With the sidechain as source, e.g. the kick starts the picture of the bass.
-    const bool fromSidechain = withSidechain
-        && juce::roundToInt (triggerSourceParam->load()) == (int) amvscope::params::TriggerSource::sidechain;
-    const long hit = trigger.process (fromSidechain ? sidechainMono.data() : mono.data(), (size_t) numSamples);
+    const int source = juce::roundToInt (triggerSourceParam->load());
+    const bool fromSidechain = withSidechain && source == (int) amvscope::params::TriggerSource::sidechain;
+    long hit = trigger.process (fromSidechain ? sidechainMono.data() : mono.data(), (size_t) numSamples);
+
+    // With MIDI as source a note starts the picture, whatever the level is.
+    if (source == (int) amvscope::params::TriggerSource::midi)
+        hit = midiHit;
 
     if (! triggerRecording && hit >= start)
     {

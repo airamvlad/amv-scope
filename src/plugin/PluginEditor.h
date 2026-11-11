@@ -55,6 +55,9 @@ public:
     void toggleGhost();
     bool hasGhost() const noexcept { return ! processor.ghostTraces.empty(); }
 
+    /** Saves a picture of the window as a PNG in the given folder; returns the file (or none on failure). */
+    juce::File savePicture (const juce::File& folder);
+
     /** Display gain of one trace in dB ("own", "sidechain", "src<id>"). Only changes the picture. */
     void setTraceGain (const juce::String& key, float db);
     float getTraceGain (const juce::String& key) const;
@@ -88,15 +91,15 @@ private:
     AMVScopeAudioProcessor& processor;
     juce::LookAndFeel_V4 lookAndFeel;
 
-    juce::Label lengthLabel, syncLabel, zoomLabel, thresholdLabel, colourLabel, sourceLabel, offsetLabel, viewLabel;
-    juce::ComboBox lengthBox, syncBox, colourBox, sourceBox, viewBox;
+    juce::Label lengthLabel, syncLabel, zoomLabel, thresholdLabel, colourLabel, sourceLabel, offsetLabel, viewLabel, channelLabel;
+    juce::ComboBox lengthBox, syncBox, colourBox, sourceBox, viewBox, channelBox;
     juce::Slider zoomSlider, thresholdSlider, offsetSlider;
     juce::TextButton freezeButton { "Freeze" };
     juce::ToggleButton sendButton { "Send" }, othersButton { "Show others" }, invertButton { "Invert" },
                        autoLevelButton { "Auto level" };
     juce::TextButton alignButton { "Align" }, ghostButton { "Ghost" };
 
-    std::unique_ptr<ComboAttachment> lengthAttachment, syncAttachment, colourAttachment, sourceAttachment, viewAttachment;
+    std::unique_ptr<ComboAttachment> lengthAttachment, syncAttachment, colourAttachment, sourceAttachment, viewAttachment, channelAttachment;
     std::unique_ptr<SliderAttachment> zoomAttachment, thresholdAttachment, offsetAttachment;
     std::unique_ptr<ButtonAttachment> freezeAttachment, sendAttachment, othersAttachment, invertAttachment,
                                       autoLevelAttachment;
@@ -109,6 +112,9 @@ private:
     std::map<juce::String, float> heldPeaks;   // smoothed peak per trace, for Auto level
     std::vector<std::pair<juce::Rectangle<int>, juce::String>> legendHits;
     bool frozenView = false;
+
+    juce::String toast;       // short message over the plot, e.g. where a picture was saved
+    int toastCountdown = 0;
 
     PhaseInfo phase;
     std::vector<bool> overlapColumns;   // where both signals sound, marked under the plot
