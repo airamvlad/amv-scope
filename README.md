@@ -67,6 +67,8 @@ Poslednja verzija sa instalerom za Windows i Mac nalazi se na stranici **[Releas
 - Windows: preuzmi i pokreni `AMVScope-...-Windows-Setup.exe`.
 - Mac: preuzmi `AMVScope-...-macOS.pkg`, desni klik, pa *Open*.
 
+**Napomena za verzije posle v0.8:** AMVScope je dobio svoj plugin ID (ranije je delio ID sa AMVSynth, pa ih je DAW mešao). U starim projektima AMVScope zato treba ponovo ubaciti na traku; nova verzija se u DAW-u vidi kao novi plugin. Posle instalacije u Bitwigu uradi *Rescan plug-ins*.
+
 Instaleri nisu potpisani, pa sistem prikaže upozorenje pri prvom pokretanju. Detalji i ručna instalacija su u [docs/INSTALL.txt](docs/INSTALL.txt).
 
 ## Za razvoj

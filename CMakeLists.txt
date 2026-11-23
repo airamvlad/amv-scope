@@ -35,7 +35,8 @@ if(AMVSCOPE_BUILD_PLUGIN)
         COMPANY_COPYRIGHT "AGPL-3.0"
         BUNDLE_ID "com.amv.amvscope"
         PLUGIN_MANUFACTURER_CODE Amvs
-        PLUGIN_CODE Amv1
+        # Own code: Amv1 was also used by AMVSynth, so hosts mixed the two up.
+        PLUGIN_CODE Amsc
         FORMATS VST3
         IS_SYNTH FALSE
         NEEDS_MIDI_INPUT TRUE
